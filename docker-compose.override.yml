@@ -1,0 +1,15 @@
+services:
+  api:
+    command: ["uvicorn", "haaland.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./apps/api/src:/app/src
+      - ./apps/api/prompts:/app/prompts
+      - ./apps/api/templates:/app/templates
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  worker:
+    volumes:
+      - ./apps/api/src:/app/src
+      - ./apps/api/prompts:/app/prompts
+      - ./apps/api/templates:/app/templates
+      - /var/run/docker.sock:/var/run/docker.sock
