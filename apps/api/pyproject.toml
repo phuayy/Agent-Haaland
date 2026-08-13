@@ -1,0 +1,103 @@
+[project]
+name = "haaland-api"
+version = "0.1.0"
+description = "Agent Haaland backend — FastAPI + LangGraph incident response and debugging loop"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "psycopg[binary]>=3.2",
+    "redis>=5.2",
+    "arq>=0.26",
+    "sse-starlette>=2.1",
+    "anthropic>=0.40",
+    "langgraph>=0.2.60",
+    "langgraph-checkpoint-postgres>=2.0.4",
+    "githubkit>=0.11",
+    "httpx>=0.27",
+    "cryptography>=43.0",
+    "structlog>=24.4",
+    "jinja2>=3.1",
+    "ruff>=0.8",
+    "gitpython>=3.1",
+    "python-multipart>=0.0.12",
+    "rfc8785>=0.1.4",
+]
+
+[project.optional-dependencies]
+presidio = [
+    "presidio-analyzer>=2.2",
+    "presidio-anonymizer>=2.2",
+]
+pdf = [
+    "weasyprint>=63.1",
+]
+openai = [
+    "openai>=1.55",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "respx>=0.22",
+    "testcontainers[postgres]>=4.9",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+ignore = ["B008"]  # FastAPI's Depends(...) as a default arg is idiomatic, not a bug
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "haaland.services.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "haaland.domain.*"
+strict = true
+
+[tool.importlinter]
+root_package = "haaland"
+
+[[tool.importlinter.contracts]]
+name = "services stay framework-free"
+type = "forbidden"
+source_modules = ["haaland.services"]
+forbidden_modules = ["fastapi", "langgraph", "anthropic", "githubkit", "arq"]
+
+[[tool.importlinter.contracts]]
+name = "domain imports nothing of ours"
+type = "forbidden"
+source_modules = ["haaland.domain"]
+forbidden_modules = [
+    "haaland.services", "haaland.db", "haaland.api", "haaland.agent",
+    "haaland.llm", "haaland.integrations",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/haaland"]

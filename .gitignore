@@ -8,3 +8,14 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local secrets
+.env
+
+# demo/seed_repo is bootstrapped into its own git repo by
+# scripts/bootstrap_demo_repo.sh — never let that nested .git get tracked
+demo/seed_repo/.git/
+
+# Disposable per-incident clones (services/workspace_service.py)
+.haaland-workspaces/
+
