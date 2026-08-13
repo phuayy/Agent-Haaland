@@ -1,0 +1,122 @@
+"""githubkit, PAT auth (docs/02 decision — swappable to App installation auth
+later since githubkit abstracts both behind the same client surface; only
+the auth strategy constructor changes). Grants needed on the PAT: repo
+contents read/write, pull requests read/write — nothing more, mirroring the
+least-privilege table in docs/09 even though a PAT itself can't be scoped as
+finely as a GitHub App installation.
+
+**No merge() method exists on this class or on the SCMProvider Protocol.**
+That absence, not a runtime check, is the control (docs/09)."""
+
+from __future__ import annotations
+
+import base64
+import contextlib
+
+from githubkit import GitHub
+from githubkit.exception import RequestFailed
+
+from haaland.integrations.base import PullRequestResult, RepoRef
+
+_CODEOWNERS_PATHS = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]
+
+
+def parse_repo_url(repo_url: str) -> RepoRef:
+    cleaned = repo_url.strip().removesuffix(".git")
+    cleaned = cleaned.removeprefix("https://github.com/").removeprefix("git@github.com:")
+    owner, _, repo = cleaned.partition("/")
+    if not owner or not repo:
+        raise ValueError(f"cannot parse GitHub repo URL: {repo_url!r}")
+    return RepoRef(owner=owner, repo=repo)
+
+
+class GitHubProvider:
+    def __init__(self, token: str | None) -> None:
+        self._client = GitHub(token) if token else GitHub()
+
+    async def get_default_branch_sha(self, ref: RepoRef, branch: str) -> str:
+        resp = await self._client.rest.git.async_get_ref(ref.owner, ref.repo, f"heads/{branch}")
+        return resp.parsed_data.object_.sha
+
+    async def get_file_contents(self, ref: RepoRef, path: str, sha: str) -> str | None:
+        try:
+            resp = await self._client.rest.repos.async_get_content(
+                ref.owner, ref.repo, path, ref=sha
+            )
+        except RequestFailed as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
+        data = resp.parsed_data
+        if data.encoding != "base64" or data.content is None:
+            return None
+        return base64.b64decode(data.content).decode("utf-8", errors="replace")
+
+    async def create_branch(self, ref: RepoRef, branch_name: str, base_sha: str) -> None:
+        await self._client.rest.git.async_create_ref(
+            ref.owner, ref.repo, ref=f"refs/heads/{branch_name}", sha=base_sha
+        )
+
+    async def commit_files(
+        self, ref: RepoRef, branch_name: str, files: dict[str, str], message: str
+    ) -> str:
+        last_sha = ""
+        for path, content in files.items():
+            existing_sha: str | None = None
+            try:
+                existing = await self._client.rest.repos.async_get_content(
+                    ref.owner, ref.repo, path, ref=branch_name
+                )
+                existing_sha = existing.parsed_data.sha
+            except RequestFailed as exc:
+                if exc.response.status_code != 404:
+                    raise
+
+            resp = await self._client.rest.repos.async_create_or_update_file_contents(
+                ref.owner,
+                ref.repo,
+                path,
+                message=message,
+                content=base64.b64encode(content.encode("utf-8")).decode("ascii"),
+                branch=branch_name,
+                sha=existing_sha,
+            )
+            last_sha = resp.parsed_data.commit.sha
+        return last_sha
+
+    async def open_pull_request(
+        self,
+        ref: RepoRef,
+        *,
+        branch_name: str,
+        base_branch: str,
+        title: str,
+        body: str,
+        labels: list[str],
+        reviewers: list[str],
+    ) -> PullRequestResult:
+        pr = await self._client.rest.pulls.async_create(
+            ref.owner, ref.repo, title=title, body=body, head=branch_name, base=base_branch
+        )
+        number = pr.parsed_data.number
+
+        if labels:
+            await self._client.rest.issues.async_add_labels(ref.owner, ref.repo, number, labels=labels)
+        if reviewers:
+            # a reviewer not on the repo, or self-review, must not block PR creation
+            with contextlib.suppress(RequestFailed):
+                await self._client.rest.pulls.async_request_reviewers(
+                    ref.owner, ref.repo, number, reviewers=reviewers
+                )
+
+        return PullRequestResult(number=number, url=pr.parsed_data.html_url, branch_name=branch_name)
+
+    async def get_codeowners(self, ref: RepoRef, sha: str) -> str | None:
+        for path in _CODEOWNERS_PATHS:
+            content = await self.get_file_contents(ref, path, sha)
+            if content is not None:
+                return content
+        return None
+
+    async def clone_url(self, ref: RepoRef) -> str:
+        return f"https://github.com/{ref.owner}/{ref.repo}.git"

@@ -1,0 +1,22 @@
+2026-08-13T09:11:40.201Z INFO orders-api Received POST /orders/quote items=0 discount_pct=15.0
+2026-08-13T09:11:40.203Z ERROR orders-api Unhandled exception in /orders/quote
+Traceback (most recent call last):
+  File "/app/app/main.py", line 11, in quote
+    return {"quoted_price": apply_discount(items, discount_pct)}
+  File "/app/app/pricing.py", line 12, in apply_discount
+    avg_price = average_item_price(items)
+  File "/app/app/pricing.py", line 8, in average_item_price
+    return total / len(items)
+ZeroDivisionError: division by zero
+2026-08-13T09:11:40.204Z ERROR orders-api 500 Internal Server Error for account ACC-8829301
+2026-08-13T09:11:41.900Z INFO orders-api Received POST /orders/quote items=0 discount_pct=5.0
+2026-08-13T09:11:41.902Z ERROR orders-api Unhandled exception in /orders/quote
+Traceback (most recent call last):
+  File "/app/app/main.py", line 11, in quote
+    return {"quoted_price": apply_discount(items, discount_pct)}
+  File "/app/app/pricing.py", line 12, in apply_discount
+    avg_price = average_item_price(items)
+  File "/app/app/pricing.py", line 8, in average_item_price
+    return total / len(items)
+ZeroDivisionError: division by zero
+2026-08-13T09:11:41.903Z ERROR orders-api 500 Internal Server Error for account ACC-8829301

@@ -1,0 +1,47 @@
+# Post-mortem — {{ incident.reference }}: {{ incident.title }}
+
+**Severity:** {{ incident.severity or "n/a" }} ({{ "%.0f"|format((incident.severity_confidence or 0) * 100) }}% confidence)
+**Detected:** {{ incident.detected_at }}
+**Closed:** {{ incident.closed_at or "in progress" }}
+**Repository:** {{ incident.repo_full_name or "n/a" }}
+
+## Summary
+
+{{ summary_prose }}
+
+## Root cause
+
+{{ incident.root_cause_summary or "not yet diagnosed" }}
+
+{{ root_cause_prose }}
+
+## Resolution
+
+{{ resolution_prose }}
+
+## Timeline
+
+| Seq | Time (UTC) | Actor | Event |
+|---|---|---|---|
+{% for event in events -%}
+| {{ event.seq }} | {{ event.occurred_at }} | {{ event.actor_label }} | {{ event.summary }} |
+{% endfor %}
+
+## What went well
+
+{{ went_well_prose }}
+
+## What didn't
+
+{{ went_wrong_prose }}
+
+## Action items
+
+{{ action_items_prose }}
+
+---
+
+*This report was assembled from `incident_events`, an append-only,
+hash-chained record. Chain verified: {{ chain_verified }}. Prose sections
+were drafted by an LLM from the structured facts above; the timeline table
+itself was rendered directly from the database and was not model-generated.*
