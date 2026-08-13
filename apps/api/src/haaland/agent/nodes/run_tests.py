@@ -8,6 +8,8 @@ leaves the test in place and reverts only the code under test."""
 
 from __future__ import annotations
 
+import git
+
 from haaland.agent.nodes._context import node_context
 from haaland.domain.enums import ActorType, CheckOutcome
 from haaland.domain.events import EventType
@@ -44,14 +46,23 @@ async def run_tests_node(state, deps) -> dict:
         passes_on_fix = post_fix_report.outcome == CheckOutcome.PASS
         fails_on_base = False
         if source_paths:
-            workspace.repo.git.stash("push", "--", *source_paths)
+            # `-u` matters: a fix can introduce a brand-new file as well as
+            # modify an existing one, and a plain `git stash push -- <path>`
+            # rejects untracked pathspecs outright ("did not match any
+            # file(s) known to git") rather than stashing them.
             try:
-                pre_fix_report = await deps.check.run_tests(
-                    workspace, test_path=test.file_path, attempt=1, install_cmd=None
-                )
-                fails_on_base = pre_fix_report.outcome == CheckOutcome.FAIL
-            finally:
-                workspace.repo.git.stash("pop")
+                workspace.repo.git.stash("push", "--include-untracked", "--", *source_paths)
+            except git.GitCommandError as exc:
+                if "no local changes to save" not in str(exc).lower():
+                    raise
+            else:
+                try:
+                    pre_fix_report = await deps.check.run_tests(
+                        workspace, test_path=test.file_path, attempt=1, install_cmd=None
+                    )
+                    fails_on_base = pre_fix_report.outcome == CheckOutcome.FAIL
+                finally:
+                    workspace.repo.git.stash("pop")
 
         accepted = passes_on_fix and fails_on_base
         outcome = "accepted" if accepted else "failed"

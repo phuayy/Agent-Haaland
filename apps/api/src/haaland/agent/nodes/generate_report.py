@@ -11,6 +11,8 @@ wasn't actually verified."""
 
 from __future__ import annotations
 
+import uuid
+
 from haaland.agent.nodes._context import node_context
 from haaland.domain.enums import ActorType, IncidentStatus
 from haaland.domain.errors import AIRefusalError
@@ -47,6 +49,8 @@ async def generate_report_node(state, deps) -> dict:
                     summary=note, event_type=event_type.value,
                 )
             incident = await ctx.incidents.get(incident_id)
+            if state.get("remediation_id"):
+                await ctx.remediations.resolve(uuid.UUID(state["remediation_id"]), "merged")
 
         events = await ctx.audit.timeline(incident_id)
         chain = await ctx.audit.verify(incident_id)

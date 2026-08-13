@@ -10,6 +10,8 @@ API consumer; approving happens via `POST /api/incidents/{id}/approve`."""
 
 from __future__ import annotations
 
+import uuid
+
 from langgraph.types import interrupt
 
 from haaland.agent.nodes._context import node_context
@@ -19,6 +21,7 @@ from haaland.domain.events import EventType
 
 async def request_approval_node(state, deps) -> dict:
     incident_id = state["incident_id"]
+    remediation_id = state.get("remediation_id")
 
     decision = interrupt(
         {
@@ -44,6 +47,8 @@ async def request_approval_node(state, deps) -> dict:
                 event_type=EventType.APPROVAL_GRANTED.value,
                 payload={"channel": decision.get("channel", "api")},
             )
+            if remediation_id:
+                await ctx.remediations.resolve(uuid.UUID(remediation_id), "approved")
             approval = "approved"
         elif outcome == "reject":
             await ctx.incident_service.transition(
@@ -55,6 +60,8 @@ async def request_approval_node(state, deps) -> dict:
                 event_type=EventType.APPROVAL_DENIED.value,
                 payload={"reason": reason},
             )
+            if remediation_id:
+                await ctx.remediations.resolve(uuid.UUID(remediation_id), "rejected")
             approval = "rejected"
         else:
             await ctx.audit.record(
