@@ -41,6 +41,30 @@ async def test_canary_never_reaches_model(canary, redactor):
     assert sum(result.entity_counts.values()) >= 1
 
 
+async def test_deploy_context_is_redacted_too(redactor):
+    """Deploy records are user-controlled content: commit author emails are
+    the obvious leak. The recursive tokenizer must reach nested values."""
+    bundle = EvidenceBundle(
+        incident_id=uuid4(),
+        service_name="orders-api",
+        repo_full_name="acme/orders-api",
+        base_ref="main",
+        deploy_context=[
+            {
+                "commit_sha": "a3f91c2",
+                "author": {"email": "priya.n@customer.example"},
+                "message": "hotfix for ACC-8829301",
+            }
+        ],
+    )
+    redacted, _ = await redactor.redact_bundle(uuid4(), bundle)
+
+    dumped = redacted.model_dump_json()
+    assert "priya.n@customer.example" not in dumped
+    assert "ACC-8829301" not in dumped
+    assert "a3f91c2" in dumped  # commit SHA is diagnostic signal, never redacted
+
+
 async def test_trace_id_is_not_redacted(redactor):
     """docs/05: over-redaction is a real failure mode — a trace_id-shaped
     hex string must survive, or the model loses the ability to correlate."""

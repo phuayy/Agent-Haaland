@@ -65,6 +65,17 @@ def test_route_by_static_check_exhausted_at_limit():
     assert routing.route_by_static_check(state, max_attempts=3) == "exhausted"
 
 
+def test_route_by_static_check_policy_rejection_still_bounded():
+    """Repeated policy rejections leave check_reports empty (nothing was
+    applied, so nothing ran). The attempt ceiling must still apply — this
+    exact path used to loop forever."""
+    state = {"check_reports": [], "fix_attempt": 3}
+    assert routing.route_by_static_check(state, max_attempts=3) == "exhausted"
+
+    state = {"check_reports": [], "fix_attempt": 1}
+    assert routing.route_by_static_check(state, max_attempts=3) == "retry"
+
+
 def test_route_by_test_outcome_proceeds_on_unrunnable():
     state = {"test_outcome": "unrunnable", "fix_attempt": 1}
     assert routing.route_by_test_outcome(state, max_attempts=3) == "proceed"
