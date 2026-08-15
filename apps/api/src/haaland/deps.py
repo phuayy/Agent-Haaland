@@ -21,6 +21,7 @@ from haaland.redaction.vault import TokenVault
 from haaland.services.check_service import CheckService
 from haaland.services.code_search_service import CodeSearchService
 from haaland.services.codeowners_service import CodeownersService
+from haaland.services.notification_service import NotificationService
 from haaland.services.postmortem_service import PostmortemService
 from haaland.services.workspace_service import WorkspaceService
 
@@ -42,6 +43,7 @@ class Deps:
     check: CheckService
     codeowners: CodeownersService
     postmortem: PostmortemService
+    notifications: NotificationService
 
 
 _redis_singleton: Redis | None = None
@@ -64,10 +66,13 @@ def build_deps(settings: Settings | None = None) -> Deps:
         redis, per_incident_usd=settings.llm_max_usd_per_incident, per_day_usd=settings.llm_max_usd_per_day
     )
 
+    from haaland.integrations.notify.registry import build_notifiers
+    from haaland.integrations.scm.auth import build_credentials
     from haaland.integrations.scm.github import GitHubProvider
     from haaland.integrations.tickets.null import NullTicketProvider
 
-    scm = GitHubProvider(token=settings.github_token)
+    credentials = build_credentials(settings)
+    scm = GitHubProvider(credentials)
     tickets = NullTicketProvider()
 
     if settings.env == "compose":
@@ -89,9 +94,10 @@ def build_deps(settings: Settings | None = None) -> Deps:
         sandbox=sandbox,
         tickets=tickets,
         budget=budget,
-        workspace=WorkspaceService(github_token=settings.github_token),
+        workspace=WorkspaceService(clone_token_provider=credentials.clone_token),
         code_search=CodeSearchService(),
-        check=CheckService(sandbox),
+        check=CheckService(sandbox, allow_unisolated_tests=settings.allow_host_test_execution),
         codeowners=CodeownersService(),
         postmortem=PostmortemService(),
+        notifications=NotificationService(build_notifiers(settings)),
     )
