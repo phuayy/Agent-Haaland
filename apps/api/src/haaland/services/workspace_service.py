@@ -9,6 +9,7 @@ import asyncio
 import shutil
 import tempfile
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,17 +23,23 @@ class Workspace:
     base_sha: str
     repo: git.Repo
 
-    def read_file(self, relative_path: str) -> str | None:
+    def _contained(self, relative_path: str) -> Path | None:
+        """Resolve and verify the target stays inside the workspace.
+        `Path.is_relative_to`, not a string-prefix check — a prefix check
+        wrongly admits sibling dirs like `/workspaces-evil` for a workspace
+        at `/workspaces`."""
         target = (self.path / relative_path).resolve()
-        if not str(target).startswith(str(self.path.resolve())):
-            return None  # traversal guard, mirrors patch_service's denylist check
-        if not target.is_file():
+        return target if target.is_relative_to(self.path.resolve()) else None
+
+    def read_file(self, relative_path: str) -> str | None:
+        target = self._contained(relative_path)
+        if target is None or not target.is_file():
             return None
         return target.read_text(encoding="utf-8", errors="replace")
 
     def write_file(self, relative_path: str, content: str) -> None:
-        target = (self.path / relative_path).resolve()
-        if not str(target).startswith(str(self.path.resolve())):
+        target = self._contained(relative_path)
+        if target is None:
             raise ValueError(f"path escapes workspace: {relative_path}")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
@@ -45,14 +52,22 @@ class Workspace:
 
 
 class WorkspaceService:
-    def __init__(self, *, github_token: str | None, workdir_root: Path | None = None) -> None:
-        self._token = github_token
+    def __init__(
+        self,
+        *,
+        clone_token_provider: Callable[[], Awaitable[str | None]],
+        workdir_root: Path | None = None,
+    ) -> None:
+        # Async provider, not a static token: GitHub App installation tokens
+        # expire hourly, so the token is fetched per clone, not per process.
+        self._clone_token_provider = clone_token_provider
         self._workdir_root = workdir_root or Path(tempfile.gettempdir()) / "haaland-workspaces"
         self._workdir_root.mkdir(parents=True, exist_ok=True)
 
-    def _authed_url(self, repo_url: str) -> str:
-        if self._token and repo_url.startswith("https://") and "@" not in repo_url:
-            return repo_url.replace("https://", f"https://{self._token}@", 1)
+    @staticmethod
+    def _authed_url(repo_url: str, token: str | None) -> str:
+        if token and repo_url.startswith("https://") and "@" not in repo_url:
+            return repo_url.replace("https://", f"https://x-access-token:{token}@", 1)
         return repo_url
 
     async def prepare(self, incident_id: uuid.UUID, repo_url: str, base_ref: str) -> Workspace:
@@ -60,8 +75,9 @@ class WorkspaceService:
         if dest.exists():
             shutil.rmtree(dest)
 
+        token = await self._clone_token_provider()
         repo = await asyncio.to_thread(
-            git.Repo.clone_from, self._authed_url(repo_url), dest, branch=base_ref, depth=50
+            git.Repo.clone_from, self._authed_url(repo_url, token), dest, branch=base_ref, depth=50
         )
         base_sha = repo.head.commit.hexsha
         return Workspace(incident_id=incident_id, path=dest, base_sha=base_sha, repo=repo)

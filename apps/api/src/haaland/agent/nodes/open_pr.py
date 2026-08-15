@@ -11,6 +11,7 @@ import uuid
 from haaland.agent.nodes._context import node_context
 from haaland.domain.enums import ActorType, IncidentStatus
 from haaland.domain.events import EventType
+from haaland.domain.models import NotificationMessage
 from haaland.integrations.scm.github import parse_repo_url
 
 
@@ -41,6 +42,27 @@ async def open_pr_node(state, deps) -> dict:
         reviewers=reviewers,
     )
 
+    # Inform code owners / team lead on the configured channels (Lark
+    # today). Delivery results are recorded per channel; a channel being
+    # down never blocks the approval gate.
+    dashboard_url = f"{deps.settings.app_base_url}/incidents/{state['reference']}"
+    classification = state.get("classification")
+    message = NotificationMessage(
+        kind="approval_requested",
+        title=f"[{state['reference']}] Fix drafted — review required",
+        body_markdown=(
+            f"**Service:** {state['service_name']}\n"
+            f"**Root cause:** {diagnosis.root_cause}\n\n"
+            f"A remediation PR has been drafted and verified by static checks. "
+            f"The agent cannot merge it — a human review is required."
+        ),
+        incident_reference=state["reference"],
+        severity=classification.severity if classification else None,
+        links={"Review PR": pr.url, "Incident": dashboard_url},
+        mentions=reviewers,
+    )
+    deliveries = await deps.notifications.broadcast(message)
+
     async with node_context(deps) as ctx:
         if state.get("remediation_id"):
             await ctx.remediations.set_pr(
@@ -54,6 +76,24 @@ async def open_pr_node(state, deps) -> dict:
             summary=f"Opened PR #{pr.number}: {remediation.pr_title}",
             payload={"pr_number": pr.number, "pr_url": pr.url, "reviewers": reviewers},
         )
+        for delivery in deliveries:
+            await ctx.notifications.record(
+                incident_id=incident_id,
+                channel=delivery.channel,
+                target=delivery.channel,  # webhook bots have no addressable target beyond the channel
+                status=delivery.status,
+                external_ref=delivery.external_ref,
+                payload={"kind": message.kind, "detail": delivery.detail},
+            )
+            await ctx.audit.record(
+                incident_id,
+                EventType.NOTIFICATION_SENT.value,
+                actor_type=ActorType.INTEGRATION,
+                actor_label=delivery.channel,
+                summary=f"Notification {delivery.status} via {delivery.channel}"
+                + (f": {delivery.detail}" if delivery.detail else ""),
+                payload={"status": delivery.status, "external_ref": delivery.external_ref},
+            )
         await ctx.incident_service.transition(
             incident_id,
             IncidentStatus.AWAITING_APPROVAL,

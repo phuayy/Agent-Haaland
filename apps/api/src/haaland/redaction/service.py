@@ -38,6 +38,19 @@ class Redactor:
             out = rec.pattern.sub(_sub, out)
         return out
 
+    def _tokenize_obj(self, obj, mapping: dict[str, str], counters: dict[str, int]):
+        """Recursive walk for structured evidence (deploy context and any
+        future dict-shaped source): every string leaf goes through the same
+        tokenizer as log lines. Commit author emails are the obvious leak
+        this closes — a deploy record is user-controlled content too."""
+        if isinstance(obj, str):
+            return self._tokenize(obj, mapping, counters)
+        if isinstance(obj, dict):
+            return {k: self._tokenize_obj(v, mapping, counters) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._tokenize_obj(v, mapping, counters) for v in obj]
+        return obj
+
     async def redact_bundle(
         self, incident_id: uuid.UUID, bundle: EvidenceBundle
     ) -> tuple[EvidenceBundle, RedactionResult]:
@@ -59,8 +72,16 @@ class Redactor:
             for c in bundle.code_candidates
         ]
 
+        redacted_deploys = [
+            self._tokenize_obj(d, mapping, counters) for d in bundle.deploy_context
+        ]
+
         redacted_bundle = bundle.model_copy(
-            update={"log_lines": redacted_lines, "code_candidates": redacted_candidates}
+            update={
+                "log_lines": redacted_lines,
+                "code_candidates": redacted_candidates,
+                "deploy_context": redacted_deploys,
+            }
         )
 
         vault_key = await self._vault.write(incident_id, mapping)

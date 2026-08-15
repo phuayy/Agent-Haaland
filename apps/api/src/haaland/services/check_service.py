@@ -18,8 +18,9 @@ from haaland.services.workspace_service import Workspace
 
 
 class CheckService:
-    def __init__(self, runner: SandboxRunner) -> None:
+    def __init__(self, runner: SandboxRunner, *, allow_unisolated_tests: bool = False) -> None:
         self._runner = runner
+        self._allow_unisolated_tests = allow_unisolated_tests
 
     async def _check_syntax(self, workspace: Workspace, changed_paths: list[str]) -> CheckFinding:
         result = await self._runner.run(
@@ -68,6 +69,26 @@ class CheckService:
     async def run_tests(
         self, workspace: Workspace, *, test_path: str | None, attempt: int, install_cmd: list[str] | None
     ) -> CheckReport:
+        if not getattr(self._runner, "isolated", False) and not self._allow_unisolated_tests:
+            # pytest executes the target repo's — and the model's — code.
+            # On a non-containerised runner that means executing it on the
+            # host, which requires an explicit opt-in
+            # (HAALAND_ALLOW_HOST_TEST_EXECUTION=true). Static checks are
+            # unaffected: py_compile and ruff parse, they never execute.
+            return CheckReport(
+                attempt=attempt,
+                outcome=CheckOutcome.UNRUNNABLE,
+                findings=[
+                    CheckFinding(
+                        tool="pytest",
+                        outcome=CheckOutcome.UNRUNNABLE,
+                        summary="tests not executed: sandbox is not isolated and host "
+                        "execution is disabled (set HAALAND_ALLOW_HOST_TEST_EXECUTION=true "
+                        "or run under Docker Compose)",
+                    )
+                ],
+            )
+
         if install_cmd:
             install_result = await self._runner.run(
                 install_cmd, cwd=str(workspace.path), timeout_seconds=180, network=True

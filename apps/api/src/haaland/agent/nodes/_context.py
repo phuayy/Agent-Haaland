@@ -15,6 +15,7 @@ from haaland.db.repositories.ai_analyses import AIAnalysisRepository
 from haaland.db.repositories.events import EventRepository
 from haaland.db.repositories.evidence import EvidenceRepository
 from haaland.db.repositories.incidents import IncidentRepository
+from haaland.db.repositories.notifications import NotificationRepository
 from haaland.db.repositories.redaction_maps import RedactionMapRepository
 from haaland.db.repositories.remediations import RemediationRepository
 from haaland.db.session import session_scope
@@ -30,6 +31,7 @@ class NodeContext:
     evidence: EvidenceRepository
     remediations: RemediationRepository
     redaction_maps: RedactionMapRepository
+    notifications: NotificationRepository
     audit: AuditService
     incident_service: IncidentService
     llm_call: LLMCallService
@@ -48,6 +50,7 @@ async def node_context(deps) -> AsyncIterator[NodeContext]:
             evidence=EvidenceRepository(session),
             remediations=RemediationRepository(session),
             redaction_maps=RedactionMapRepository(session),
+            notifications=NotificationRepository(session),
             audit=audit,
             incident_service=IncidentService(incidents_repo, audit),
             llm_call=LLMCallService(deps.llm, analyses_repo, deps.budget),

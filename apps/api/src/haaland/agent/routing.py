@@ -28,11 +28,13 @@ def route_by_diagnosis_confidence(state: IncidentState) -> str:
 
 def route_by_static_check(state: IncidentState, max_attempts: int) -> str:
     reports = state.get("check_reports") or []
-    if not reports:
-        return "retry"
-    outcome = reports[-1]["outcome"]
-    if outcome == "pass":
+    if reports and reports[-1]["outcome"] == "pass":
         return "pass"
+    # The attempt ceiling must apply even when there is no report at all —
+    # a policy-rejected draft (apply_patch wrote nothing, so static_check
+    # had nothing to run) leaves `check_reports` empty, and without this
+    # check that path would retry forever until the budget guard killed
+    # the run with an exception instead of a clean escalation.
     if state.get("fix_attempt", 0) >= max_attempts:
         return "exhausted"
     return "retry"

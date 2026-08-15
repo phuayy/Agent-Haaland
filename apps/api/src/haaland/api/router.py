@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from haaland.api.routes import audit, debug_sessions, incidents, postmortems
+from haaland.api.routes import audit, debug_sessions, incidents, notifications, postmortems
 from haaland.api.webhooks import alertmanager, github
 
 api_router = APIRouter()
@@ -12,6 +12,7 @@ for router in (
     incidents.router,
     audit.router,
     postmortems.router,
+    notifications.router,
     alertmanager.router,
     github.router,
 ):

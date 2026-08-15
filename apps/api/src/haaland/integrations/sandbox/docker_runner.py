@@ -15,6 +15,8 @@ _ALLOWED_EXECUTABLES = {"python", "ruff", "pytest", "git", "pip"}
 
 
 class DockerRunner:
+    isolated = True
+
     def __init__(self, image: str = "python:3.12-slim", *, cpu_limit: str = "1", memory_limit: str = "512m"):
         self._image = image
         self._cpu_limit = cpu_limit

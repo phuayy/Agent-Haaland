@@ -158,6 +158,20 @@ class TestValidation(BaseModel):
     detail: str
 
 
+class NotificationMessage(BaseModel):
+    """Channel-agnostic notification. Adapters (Lark today; Slack/Teams/
+    email later) translate this into their own wire format — nothing
+    upstream of integrations/notify/ knows what channel is configured."""
+
+    kind: Literal["approval_requested", "incident_closed", "escalated", "test"]
+    title: str
+    body_markdown: str
+    incident_reference: str | None = None
+    severity: Severity | None = None
+    links: dict[str, str] = Field(default_factory=dict)  # label -> url
+    mentions: list[str] = Field(default_factory=list)  # reviewer/owner handles
+
+
 class PostmortemProse(BaseModel):
     summary: str
     root_cause_narrative: str

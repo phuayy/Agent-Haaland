@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-from haaland.domain.models import LogLine, TimeWindow
+from haaland.domain.models import LogLine, NotificationMessage, TimeWindow
 
 
 class SignalSource(Protocol):
@@ -81,7 +81,14 @@ class CommandResult:
 class SandboxRunner(Protocol):
     """A fixed allowlist, no model-supplied argv, run against a disposable
     clone. This is the boundary that keeps the debug loop from becoming an
-    arbitrary-code-execution tool (docs/09 layer 1)."""
+    arbitrary-code-execution tool (docs/09 layer 1).
+
+    `isolated` states whether commands run inside a real container. Running
+    pytest executes the target repo's (and the model's) code, so
+    CheckService refuses the test phase on a non-isolated runner unless
+    explicitly allowed by config."""
+
+    isolated: bool
 
     async def run(
         self, argv: list[str], *, cwd: str, timeout_seconds: int = 120, network: bool = False
@@ -89,7 +96,19 @@ class SandboxRunner(Protocol):
 
 
 class Notifier(Protocol):
-    async def notify(self, target: str, payload: dict) -> str: ...
+    """One instance per configured channel (integrations/notify/registry.py).
+    `send` returns the channel's external reference (message id / request
+    id) for the notifications audit row. Adapters raise NotificationError
+    on failure; the NotificationService catches it — one channel being down
+    must never fail the incident pipeline."""
+
+    name: str
+
+    async def send(self, message: NotificationMessage) -> str: ...
+
+
+class NotificationError(Exception):
+    """Raised by a Notifier when delivery fails."""
 
 
 class TicketProvider(Protocol):

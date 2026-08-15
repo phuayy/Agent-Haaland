@@ -17,7 +17,7 @@ from haaland.agent.nodes._context import node_context
 from haaland.domain.enums import ActorType, IncidentStatus
 from haaland.domain.errors import AIRefusalError
 from haaland.domain.events import EventType
-from haaland.domain.models import PostmortemProse
+from haaland.domain.models import NotificationMessage, PostmortemProse
 from haaland.llm.rendering import render_report_input
 
 
@@ -102,6 +102,29 @@ async def generate_report_node(state, deps) -> dict:
                 summary="Post-mortem generated; incident closed; chain sealed",
                 event_type=EventType.POSTMORTEM_GENERATED.value,
                 payload={"chain_valid": chain["valid"]},
+            )
+
+        closing_message = NotificationMessage(
+            kind="incident_closed",
+            title=f"[{incident.reference}] Incident closed — post-mortem ready",
+            body_markdown=(
+                f"**Root cause:** {incident.root_cause_summary or 'n/a'}\n"
+                f"**Audit chain:** {'verified' if chain['valid'] else 'BROKEN — investigate'}"
+            ),
+            incident_reference=incident.reference,
+            links={
+                "Post-mortem": f"{deps.settings.app_base_url}/api/incidents/{incident.reference}/postmortem",
+                **({"PR": state["pr_url"]} if state.get("pr_url") else {}),
+            },
+        )
+        for delivery in await deps.notifications.broadcast(closing_message):
+            await ctx.notifications.record(
+                incident_id=incident_id,
+                channel=delivery.channel,
+                target=delivery.channel,
+                status=delivery.status,
+                external_ref=delivery.external_ref,
+                payload={"kind": closing_message.kind, "detail": delivery.detail},
             )
 
     return {}

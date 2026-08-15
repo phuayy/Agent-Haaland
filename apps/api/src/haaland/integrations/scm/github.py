@@ -1,12 +1,14 @@
-"""githubkit, PAT auth (docs/02 decision — swappable to App installation auth
-later since githubkit abstracts both behind the same client surface; only
-the auth strategy constructor changes). Grants needed on the PAT: repo
-contents read/write, pull requests read/write — nothing more, mirroring the
-least-privilege table in docs/09 even though a PAT itself can't be scoped as
-finely as a GitHub App installation.
+"""githubkit against a pluggable credential strategy (scm/auth.py):
+GitHub App installation tokens in `app` mode (the docs/02 production
+choice — least-privilege, short-lived, revocable per repo) or a PAT in
+`pat` mode for single-developer setups. Permission set either way:
+Contents read/write, Pull requests read/write, Metadata read — nothing
+more, per the least-privilege table in docs/09.
 
 **No merge() method exists on this class or on the SCMProvider Protocol.**
-That absence, not a runtime check, is the control (docs/09)."""
+That absence, not a runtime check, is the control (docs/09). In `app` mode
+it is double-enforced: the App simply is not granted any permission that
+could merge or administer the repository."""
 
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ from githubkit import GitHub
 from githubkit.exception import RequestFailed
 
 from haaland.integrations.base import PullRequestResult, RepoRef
+from haaland.integrations.scm.auth import GitHubCredentials
 
 _CODEOWNERS_PATHS = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]
 
@@ -31,8 +34,8 @@ def parse_repo_url(repo_url: str) -> RepoRef:
 
 
 class GitHubProvider:
-    def __init__(self, token: str | None) -> None:
-        self._client = GitHub(token) if token else GitHub()
+    def __init__(self, credentials: GitHubCredentials) -> None:
+        self._client = GitHub(credentials.auth_strategy())
 
     async def get_default_branch_sha(self, ref: RepoRef, branch: str) -> str:
         resp = await self._client.rest.git.async_get_ref(ref.owner, ref.repo, f"heads/{branch}")

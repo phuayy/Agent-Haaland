@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from haaland.db.models.incident import Incident
@@ -75,10 +75,9 @@ class IncidentRepository:
         await self._session.flush()
 
     async def next_reference(self) -> str:
-        from sqlalchemy import func
-
+        """Sequence-backed (migration 0002), so two concurrent submissions
+        can never race into the same reference — the old count-based scheme
+        could, and lost the race on the unique constraint."""
+        n = await self._session.scalar(text("SELECT nextval('incident_reference_seq')"))
         year = datetime.now(UTC).year
-        n = await self._session.scalar(
-            select(func.count()).select_from(Incident).where(Incident.reference.like(f"INC-{year}-%"))
-        )
-        return f"INC-{year}-{(n or 0) + 1:04d}"
+        return f"INC-{year}-{n:04d}"
