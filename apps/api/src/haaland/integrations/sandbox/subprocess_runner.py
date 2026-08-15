@@ -13,6 +13,8 @@ _ALLOWED_EXECUTABLES = {"python", "ruff", "pytest", "git", "pip"}
 
 
 class SubprocessRunner:
+    isolated = False  # host process — CheckService gates the pytest phase on this
+
     async def run(
         self, argv: list[str], *, cwd: str, timeout_seconds: int = 120, network: bool = False
     ) -> CommandResult:

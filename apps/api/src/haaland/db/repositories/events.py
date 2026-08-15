@@ -70,10 +70,15 @@ class EventRepository:
         payload: dict | None = None,
         actor_id: str | None = None,
     ) -> IncidentEvent:
-        """Insert the next event in sequence. Relies on the caller holding a
-        transaction — two concurrent appends on the same incident must not
-        interleave, or seq/prev_hash would race. Callers use session_scope()
-        per-incident, which is sufficient at prototype concurrency."""
+        """Insert the next event in sequence. Serialised per incident with a
+        row lock on the parent incident: two concurrent appends (e.g. an
+        approval webhook landing while the worker writes a node event) would
+        otherwise both read the same head, compute the same seq/prev_hash,
+        and the loser would fail the unique constraint mid-transaction.
+        FOR UPDATE makes the second writer wait and chain onto the first."""
+        await self._session.execute(
+            select(Incident.id).where(Incident.id == incident_id).with_for_update()
+        )
         head = await self._session.scalar(
             select(IncidentEvent)
             .where(IncidentEvent.incident_id == incident_id)
