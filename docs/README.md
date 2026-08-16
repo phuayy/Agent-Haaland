@@ -19,6 +19,7 @@ This folder is the full engineering plan: architecture, technology choices with 
 | 08 | [Roadmap](08-roadmap.md) | 6 phases, each with deliverables and acceptance criteria |
 | 09 | [Security & Compliance](09-security-compliance.md) | Threat model, prompt-injection defence, least-privilege, regulatory mapping |
 | 10 | [Demo Script](10-demo-script.md) | The 5-minute demo, beat by beat, with the chaos commands that trigger it |
+| 11 | [MVP Starter Plan](11-mvp-plan.md) | **Start here to build.** What to cut, what to build first, five milestones with runnable gates |
 
 ## The 60-second version
 
