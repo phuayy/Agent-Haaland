@@ -19,3 +19,6 @@ demo/seed_repo/.git/
 # Disposable per-incident clones (services/workspace_service.py)
 .haaland-workspaces/
 
+# graphify skill output (generated knowledge graph, cache, reports)
+graphify-out/
+
