@@ -40,7 +40,7 @@ class CodeLocation(BaseModel):
     start_line: int
     end_line: int
     snippet: str
-    reason: str  # 'traceback_frame' | 'error_signature_grep' | 'symbol_reference'
+    reason: str  # 'traceback_frame' | 'function_name_grep' | 'error_signature_grep' | 'symbol_reference (…)'
     confidence: float = Field(ge=0, le=1)
 
 
@@ -60,6 +60,10 @@ class EvidenceBundle(BaseModel):
     base_ref: str
     log_lines: list[LogLine] = Field(default_factory=list)
     code_candidates: list[CodeLocation] = Field(default_factory=list)
+    # Function names outermost-first, off the traceback frames — the failing
+    # request's workflow, so diagnosis sees the path taken, not just the
+    # frame the exception surfaced in.
+    call_chain: list[str] = Field(default_factory=list)
     deploy_context: list[dict] = Field(default_factory=list)
 
 

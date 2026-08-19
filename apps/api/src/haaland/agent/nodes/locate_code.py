@@ -6,6 +6,7 @@ from __future__ import annotations
 from haaland.agent.nodes._context import node_context
 from haaland.domain.enums import ActorType, EvidenceKind
 from haaland.domain.events import EventType
+from haaland.services.code_search_service import extract_call_chain
 
 
 async def locate_code_node(state, deps) -> dict:
@@ -13,7 +14,10 @@ async def locate_code_node(state, deps) -> dict:
     workspace = deps.workspace.reopen(incident_id, state["workspace_path"], state["base_sha"])
 
     candidates = deps.code_search.locate(workspace, state["log_text"])
-    bundle = state["evidence"].model_copy(update={"code_candidates": candidates})
+    call_chain = extract_call_chain(state["log_text"])
+    bundle = state["evidence"].model_copy(
+        update={"code_candidates": candidates, "call_chain": call_chain}
+    )
 
     async with node_context(deps) as ctx:
         for c in candidates:

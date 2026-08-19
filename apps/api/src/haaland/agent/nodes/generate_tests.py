@@ -26,7 +26,10 @@ async def generate_tests_node(state, deps) -> dict:
             incident_id=incident_id,
             stage="test",
             redacted_text=render_test_input(
-                state["diagnosis"], remediation.pr_title, state.get("changed_paths") or []
+                state["diagnosis"],
+                remediation.pr_title,
+                state.get("changed_paths") or [],
+                combined_patch=state.get("combined_patch"),
             ),
             output_schema=RegressionTest,
         )

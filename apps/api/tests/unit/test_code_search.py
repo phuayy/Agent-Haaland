@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from haaland.services.code_search_service import CodeSearchService
+from haaland.services.code_search_service import CodeSearchService, extract_call_chain
 from haaland.services.workspace_service import Workspace
 
 _PRICING_SOURCE = '''"""Order pricing helpers for the seed 'orders-api' service."""
@@ -74,3 +74,57 @@ def test_no_candidates_when_traceback_does_not_match_repo(tmp_path):
     candidates = CodeSearchService().locate(workspace, unrelated_log)
 
     assert all(c.reason != "traceback_frame" for c in candidates)
+
+
+def test_function_name_grep_when_frame_path_does_not_map(tmp_path):
+    """A traceback from a container layout the clone doesn't mirror still
+    names the failing function — the definition must be grepped instead of
+    the frame being dropped."""
+    workspace = _workspace(tmp_path)
+    log = (
+        "Traceback (most recent call last):\n"
+        '  File "/srv/deployed/elsewhere.py", line 8, in average_item_price\n'
+        "    return total / len(items)\n"
+        "ZeroDivisionError: division by zero\n"
+    )
+    candidates = CodeSearchService().locate(workspace, log)
+
+    grepped = [c for c in candidates if c.reason == "function_name_grep"]
+    assert grepped, "expected a function_name_grep candidate"
+    assert grepped[0].path == "app/pricing.py"
+    assert "def average_item_price" in grepped[0].snippet
+
+
+def test_symbol_references_expand_to_callers_outside_the_traceback(tmp_path):
+    """`build_report` calls the failing `average_item_price` but never
+    appears in the traceback; one hop of call-graph expansion must surface
+    it as a related candidate ranked below every primary. Callers that are
+    already traceback primaries must NOT be duplicated as symbol refs."""
+    workspace = _workspace(tmp_path)
+    (tmp_path / "app" / "reports.py").write_text(
+        "from app.pricing import average_item_price\n\n\n"
+        "def build_report(items: list[dict]) -> float:\n"
+        "    return average_item_price(items) * 2\n",
+        encoding="utf-8",
+    )
+    candidates = CodeSearchService().locate(workspace, _LOG_TEXT)
+
+    related = [c for c in candidates if c.reason.startswith("symbol_reference")]
+    assert any(
+        "caller of average_item_price" in c.reason and "def build_report" in c.snippet
+        for c in related
+    ), f"expected build_report as caller, got: {[c.reason for c in candidates]}"
+
+    primaries = [c for c in candidates if not c.reason.startswith("symbol_reference")]
+    primary_spans = {(c.path, c.start_line) for c in primaries}
+    assert all((r.path, r.start_line) not in primary_spans for r in related)
+    assert all(r.confidence < min(c.confidence for c in primaries) for r in related)
+
+
+def test_extract_call_chain_orders_outermost_first():
+    assert extract_call_chain(_LOG_TEXT) == ["quote", "apply_discount", "average_item_price"]
+
+
+def test_extract_call_chain_ignores_module_frames():
+    log = '  File "/app/x.py", line 1, in <module>\n  File "/app/y.py", line 2, in handler\n'
+    assert extract_call_chain(log) == ["handler"]

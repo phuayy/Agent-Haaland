@@ -25,9 +25,12 @@ def render_diagnosis_input(bundle: EvidenceBundle) -> str:
         f"(reason={c.reason}, confidence={c.confidence:.2f})\n```\n{c.snippet}\n```"
         for i, c in enumerate(bundle.code_candidates)
     )
+    chain = " -> ".join(bundle.call_chain)
     return (
         f"Service: {bundle.service_name}\nRepository: {bundle.repo_full_name}\n\n"
-        f"## Log lines\n{log_lines}\n\n## Code candidates\n{candidates or '(none located)'}"
+        f"## Log lines\n{log_lines}\n\n"
+        f"## Failure call chain (outermost first)\n{chain or '(no traceback frames)'}\n\n"
+        f"## Code candidates\n{candidates or '(none located)'}"
     )
 
 
@@ -61,11 +64,18 @@ def render_remediate_input(diagnosis: Diagnosis, evaluation: FixEvaluation) -> s
     )
 
 
-def render_test_input(diagnosis: Diagnosis, fix_summary: str, changed_paths: list[str]) -> str:
-    return (
+def render_test_input(
+    diagnosis: Diagnosis, fix_summary: str, changed_paths: list[str], combined_patch: str | None = None
+) -> str:
+    body = (
         f"## Failure scenario\n{diagnosis.root_cause}\n\n## Applied fix\n{fix_summary}\n\n"
         f"## Changed files\n" + "\n".join(f"- {p}" for p in changed_paths)
     )
+    if combined_patch:
+        # The diff is the ground truth the smoke test must exercise — without
+        # it the model tests the root-cause *description*, not the code.
+        body += f"\n\n## Applied diff\n```diff\n{combined_patch[:8000]}\n```"
+    return body
 
 
 def render_report_input(incident_summary: dict, events: list[dict]) -> str:
