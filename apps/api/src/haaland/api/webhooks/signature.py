@@ -26,6 +26,35 @@ def verify_github_signature(secret: str | None, raw_body: bytes, signature_heade
     return hmac.compare_digest(expected, signature_header)
 
 
+def verify_lark_signature(
+    encrypt_key: str | None,
+    timestamp: str | None,
+    nonce: str | None,
+    raw_body: bytes,
+    signature_header: str | None,
+    *,
+    replay_window_seconds: int = 300,
+) -> bool:
+    """Lark signs callbacks with sha256(timestamp + nonce + encrypt_key +
+    raw_body) — a plain digest of a secret-containing string, not an HMAC.
+    That is Lark's scheme, not a simplification of it; it still needs a
+    constant-time compare and the same 5-minute replay window as Slack.
+
+    Only applicable when an Encrypt Key is configured on the Lark app; with
+    no key there is nothing to verify, so this returns False and the caller
+    must refuse the request rather than treating it as authentic."""
+    if not encrypt_key or not timestamp or not nonce or not signature_header:
+        return False
+    try:
+        if abs(time.time() - int(timestamp)) > replay_window_seconds:
+            return False
+    except ValueError:
+        return False
+    basestring = timestamp.encode() + nonce.encode() + encrypt_key.encode() + raw_body
+    expected = sha256(basestring).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+
+
 def verify_slack_signature(
     signing_secret: str | None, timestamp: str | None, raw_body: bytes, signature_header: str | None,
     *, replay_window_seconds: int = 300,

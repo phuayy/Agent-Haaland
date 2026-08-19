@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 
 from haaland.config import Settings, get_settings
 from haaland.integrations.base import SandboxRunner, SCMProvider, TicketProvider
+from haaland.integrations.notify.lark import LarkAppClient
 from haaland.llm.base import LLMProvider
 from haaland.llm.budget import BudgetGuard
 from haaland.llm.registry import build_provider
@@ -37,6 +38,10 @@ class Deps:
     sandbox: SandboxRunner
     tickets: TicketProvider
     budget: BudgetGuard
+    # None unless the Lark channel runs the tenant-application transport;
+    # the operator diagnostics routes need the raw client, not just the
+    # notifier wrapped around it.
+    lark: LarkAppClient | None
 
     workspace: WorkspaceService
     code_search: CodeSearchService
@@ -66,13 +71,14 @@ def build_deps(settings: Settings | None = None) -> Deps:
         redis, per_incident_usd=settings.llm_max_usd_per_incident, per_day_usd=settings.llm_max_usd_per_day
     )
 
-    from haaland.integrations.notify.registry import build_notifiers
+    from haaland.integrations.notify.registry import build_lark_client, build_notifiers
     from haaland.integrations.scm.auth import build_credentials
     from haaland.integrations.scm.github import GitHubProvider
     from haaland.integrations.tickets.null import NullTicketProvider
 
     credentials = build_credentials(settings)
     scm = GitHubProvider(credentials)
+    lark_client = build_lark_client(settings)
     tickets = NullTicketProvider()
 
     if settings.env == "compose":
@@ -94,10 +100,11 @@ def build_deps(settings: Settings | None = None) -> Deps:
         sandbox=sandbox,
         tickets=tickets,
         budget=budget,
+        lark=lark_client,
         workspace=WorkspaceService(clone_token_provider=credentials.clone_token),
         code_search=CodeSearchService(),
         check=CheckService(sandbox, allow_unisolated_tests=settings.allow_host_test_execution),
         codeowners=CodeownersService(),
         postmortem=PostmortemService(),
-        notifications=NotificationService(build_notifiers(settings)),
+        notifications=NotificationService(build_notifiers(settings, lark_client)),
     )

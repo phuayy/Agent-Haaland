@@ -17,6 +17,9 @@ dependencies = [
     "arq>=0.26",
     "sse-starlette>=2.1",
     "anthropic>=0.40",
+    # Required, not optional: the default provider (deepseek) speaks the
+    # OpenAI-compatible wire format through this SDK.
+    "openai>=1.55",
     "langgraph>=0.2.60",
     "langgraph-checkpoint-postgres>=2.0.4",
     "githubkit>=0.11",

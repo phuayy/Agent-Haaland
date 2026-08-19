@@ -174,6 +174,11 @@ class NotificationMessage(BaseModel):
     severity: Severity | None = None
     links: dict[str, str] = Field(default_factory=dict)  # label -> url
     mentions: list[str] = Field(default_factory=list)  # reviewer/owner handles
+    # Opaque channel-specific destination (a Lark chat_id/open_id/email, a
+    # Slack channel, …). None means "the channel's configured default".
+    # Adapters that cannot address a destination — a Lark custom webhook bot
+    # is bound to one chat — ignore it.
+    target: str | None = None
 
 
 class PostmortemProse(BaseModel):

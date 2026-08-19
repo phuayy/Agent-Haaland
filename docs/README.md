@@ -20,6 +20,9 @@ This folder is the full engineering plan: architecture, technology choices with 
 | 09 | [Security & Compliance](09-security-compliance.md) | Threat model, prompt-injection defence, least-privilege, regulatory mapping |
 | 10 | [Demo Script](10-demo-script.md) | The 5-minute demo, beat by beat, with the chaos commands that trigger it |
 | 11 | [MVP Starter Plan](11-mvp-plan.md) | **Start here to build.** What to cut, what to build first, five milestones with runnable gates |
+| 11 | [Monitoring Trigger & Lark](11-monitoring-trigger-integration.md) | Generic monitoring-platform ingestion contract, log compaction, Lark approval flow |
+| 12 | [Setup & Integration Guide](12-setup-and-integration-guide.md) | Every setting, how to launch and verify, what is *actually* implemented |
+| 13 | [Lark Integration](13-lark-integration.md) | Connecting a Lark organisation, both bot transports, step-by-step verification |
 
 ## The 60-second version
 

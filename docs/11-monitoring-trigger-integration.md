@@ -207,10 +207,16 @@ bot, because the approval gate is the safety-critical interaction and it
 must not silently degrade to "post a message and hope someone checks the
 dashboard."
 
-```python
-# apps/api/src/haaland/integrations/notify/lark.py
+Implemented — see [13-lark-integration.md](13-lark-integration.md) for the
+console walkthrough and the verification sequence. The adapter shipped as
+`integrations/notify/lark/app_bot.py` over `…/lark/client.py`, alongside the
+custom-bot transport in `…/lark/webhook_bot.py`; both are selected by
+`HAALAND_LARK_MODE`.
 
-class LarkNotifier:
+```python
+# apps/api/src/haaland/integrations/notify/lark/app_bot.py
+
+class LarkAppNotifier:
     """Implements the Notifier Protocol (integrations/base.py).
     Auth: tenant_access_token, refreshed via app_id/app_secret, cached with
     a safety margin before its ~2h expiry."""

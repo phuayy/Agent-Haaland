@@ -1,4 +1,4 @@
-.PHONY: up down migrate seed test lint chaos-pool debug-sample logs
+.PHONY: up down migrate seed test lint chaos-pool debug-sample lark-check lark-send logs
 
 up:        ## bring up postgres, redis, api, worker
 	docker compose up -d --build
@@ -16,6 +16,12 @@ debug-sample: ## submit the bundled broken seed repo as a debug session
 	curl -sS -X POST localhost:8000/api/debug-sessions \
 		-H 'content-type: application/json' \
 		-d @demo/seed_repo/sample_request.json
+
+lark-check: ## verify the Lark connection (token + chat list), sends nothing
+	docker compose exec api python scripts/lark_check.py
+
+lark-send: ## same, then post a real test card to the configured destination
+	docker compose exec api python scripts/lark_check.py --send
 
 test:      ## run the pytest suite inside the api container
 	docker compose exec api pytest -q

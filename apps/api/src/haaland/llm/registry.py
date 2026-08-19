@@ -15,6 +15,17 @@ def build_provider(settings: Settings) -> LLMProvider:
 
         return FakeLLMProvider()
 
+    if settings.llm_provider == "deepseek":
+        if not settings.deepseek_api_key:
+            raise RuntimeError("HAALAND_DEEPSEEK_API_KEY is required when llm_provider=deepseek")
+        from haaland.llm.providers.deepseek import DeepSeekProvider
+
+        return DeepSeekProvider(
+            settings.deepseek_api_key,
+            default_model=settings.model_primary,
+            base_url=settings.deepseek_base_url,
+        )
+
     if settings.llm_provider == "anthropic":
         if not settings.anthropic_api_key:
             raise RuntimeError("HAALAND_ANTHROPIC_API_KEY is required when llm_provider=anthropic")

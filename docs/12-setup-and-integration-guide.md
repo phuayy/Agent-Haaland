@@ -19,12 +19,14 @@ yet**, it is called out explicitly in [§7](#7-what-is-not-implemented-yet).
 | Approve / reject over HTTP, resuming the checkpointed graph | ✅ implemented |
 | Hash-chained audit timeline + chain verification endpoint | ✅ implemented |
 | Post-mortem retrieval (JSON or markdown) | ✅ implemented |
-| Lark notification (custom webhook bot, push-only) | ✅ implemented |
-| LLM providers: `fake` (offline), `anthropic`, `openai` | ✅ implemented |
+| Lark notification — custom webhook bot (one chat, push-only) | ✅ implemented |
+| Lark notification — tenant application (org-wide: any chat, DMs, editable cards) | ✅ implemented |
+| LLM providers: `fake` (offline), `deepseek` (default real provider), `anthropic`, `openai` | ✅ implemented |
 | `POST /webhooks/alertmanager` | ⚠️ auth is real, ingestion returns **501** |
 | `POST /webhooks/github` | ⚠️ signature check is real, ingestion returns **501** |
 | `POST /webhooks/monitor` (docs/11 generic monitoring contract) | ❌ not implemented |
-| Lark interactive approve/reject callback | ❌ not implemented (push-only bot) |
+| Lark callback URL verification (`POST /webhooks/lark/card` challenge) | ✅ implemented |
+| Lark interactive approve/reject callback | ❌ not implemented — the endpoint returns **501** |
 | Slack, PagerDuty, Jira, ticketing | ❌ `NullTicketProvider`, no Slack adapter |
 | **API authentication on `/api/*`** | ❌ **none** — see [§4.2](#42-there-is-no-authentication-on-api-yet) |
 
@@ -56,18 +58,36 @@ time if either is still the default or if `HAALAND_CORS_ORIGINS` is `*`.
 
 ### 2.2 LLM provider — pick exactly one
 
-`HAALAND_LLM_PROVIDER` ∈ `fake` | `anthropic` | `openai` (default `fake`).
+`HAALAND_LLM_PROVIDER` ∈ `fake` | `deepseek` | `anthropic` | `openai` (default
+`fake`; `deepseek` is the default *real* provider).
 
 | Provider | Key required | Enforcement |
 |---|---|---|
 | `fake` | **none** | deterministic fixtures, zero network, zero spend — the CI/offline default |
-| `anthropic` | `HAALAND_ANTHROPIC_API_KEY` | `build_provider` raises `RuntimeError` at startup if missing |
-| `openai` | `HAALAND_OPENAI_API_KEY` | same; **also** requires installing the optional extra — `openai` is not a base dependency (`pip install "haaland-api[openai]"` / `uv sync --extra openai`) |
+| `deepseek` | `HAALAND_DEEPSEEK_API_KEY` | `build_provider` raises `RuntimeError` at startup if missing |
+| `anthropic` | `HAALAND_ANTHROPIC_API_KEY` | same |
+| `openai` | `HAALAND_OPENAI_API_KEY` | same |
 
-Model IDs default to `claude-opus-5` (primary), `claude-haiku-4-5` (cheap),
-`claude-sonnet-5` (report). Cost guardrails: `HAALAND_LLM_MAX_USD_PER_INCIDENT`
-(default `2.00`) and `HAALAND_LLM_MAX_USD_PER_DAY` (default `50.00`), enforced
-by `BudgetGuard` against Redis counters.
+Model IDs default to `deepseek-v4-flash` (primary and cheap) and
+`deepseek-v4-pro` (report). They are provider-specific strings: `config.py`
+refuses to start if the selected provider and the `HAALAND_MODEL_*` names
+disagree (`deepseek-*` / `claude-*` / `gpt-*`), so switching provider means
+switching model names in the same edit.
+
+Cost guardrails: `HAALAND_LLM_MAX_USD_PER_INCIDENT` (default `2.00`) and
+`HAALAND_LLM_MAX_USD_PER_DAY` (default `50.00`), enforced by `BudgetGuard`
+against Redis counters. Those ceilings were sized for Claude pricing; on
+`deepseek-v4-flash` they buy roughly two orders of magnitude more traffic, so
+lower them if you want the guard to bite.
+
+**DeepSeek specifics** (`llm/providers/deepseek.py`,
+`llm/templates/deepseek/README.md`): it is reached through the *OpenAI*-compatible
+surface at `HAALAND_DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`), not
+the Anthropic-compatible one at `/anthropic` — that endpoint has no
+structured-output path and ignores `cache_control`, and it silently remaps
+unknown model names to `deepseek-v4-flash`. DeepSeek has JSON mode but no strict
+`json_schema` mode, so the schema is appended as a system block and validated
+here, with one repair turn before the stage fails as `invalid_output`.
 
 ### 2.3 GitHub credentials — two modes
 
@@ -103,13 +123,39 @@ which currently 501s after verifying the signature.
 notifications entirely. Today the only accepted value is `lark` — **any other
 name raises `ValueError` at startup**.
 
+Lark has two transports, selected by `HAALAND_LARK_MODE`. Both report as
+channel `lark` and render the same card; full walkthrough in
+[13-lark-integration.md](13-lark-integration.md).
+
 | Variable | Required when |
 |---|---|
-| `HAALAND_LARK_WEBHOOK_URL` | `lark` is in `NOTIFY_CHANNELS` (else `RuntimeError` at startup) |
-| `HAALAND_LARK_WEBHOOK_SECRET` | only if the Lark bot has "Signature verification" enabled |
+| `HAALAND_LARK_MODE` | `webhook` (default) — one custom bot, one chat, push-only · `app` — an application installed into the Lark tenant |
+| `HAALAND_LARK_DOMAIN` | `global` (default, larksuite.com) or `feishu` (feishu.cn) — separate clouds, separate app registries |
+| `HAALAND_LARK_WEBHOOK_URL` | `MODE=webhook` and `lark` is in `NOTIFY_CHANNELS` (else `RuntimeError` at startup) |
+| `HAALAND_LARK_WEBHOOK_SECRET` | only if the custom bot has "Signature verification" enabled |
+| `HAALAND_LARK_APP_ID` / `HAALAND_LARK_APP_SECRET` | `MODE=app` (else `RuntimeError` at startup) |
+| `HAALAND_LARK_DEFAULT_RECEIVE_ID` | `MODE=app` — a `chat_id` (`oc_…`), `open_id` (`ou_…`) or work email; the type is inferred from the prefix |
+| `HAALAND_LARK_ENCRYPT_KEY` / `HAALAND_LARK_VERIFICATION_TOKEN` | only to register a Request URL at `POST /webhooks/lark/card` |
 
-Lark setup: target group chat → Settings → Bots → Add Bot → Custom Bot → copy
-the webhook URL.
+Webhook-bot setup: target group chat → Settings → Bots → Add Bot → Custom Bot
+→ copy the webhook URL.
+
+App setup, in short: create a custom app in the Lark developer console →
+enable the **Bot** feature → grant `im:message`, `im:chat:readonly`
+(+ `contact:user.id:readonly` to address people) → **release the version and
+have a Lark admin approve it** → add the bot to the target chat → read the
+`chat_id` from `GET /api/notifications/lark/chats`. The admin-approval step
+is the one that is silently fatal: without it the token exchange succeeds and
+every send fails.
+
+Verification (each isolates one failure mode):
+
+```bash
+curl -s   localhost:8000/api/notifications/lark/verify   # credentials only
+curl -s   localhost:8000/api/notifications/lark/chats    # membership + chat_id
+curl -sX POST localhost:8000/api/notifications/test      # real delivery
+make lark-check                                          # same, no API needed
+```
 
 ### 2.5 Behaviour & safety
 
@@ -134,7 +180,7 @@ Offline smoke test (no external calls at all):
 
 Real end-to-end run producing a real PR:
   HAALAND_SECRET_KEY, HAALAND_VAULT_ENCRYPTION_KEY
-  HAALAND_LLM_PROVIDER=anthropic + HAALAND_ANTHROPIC_API_KEY
+  HAALAND_LLM_PROVIDER=deepseek + HAALAND_DEEPSEEK_API_KEY
   HAALAND_GITHUB_AUTH_MODE=pat + HAALAND_GITHUB_TOKEN   (or the three APP_* vars)
 
 Add notifications:
@@ -177,7 +223,8 @@ removes the single most common prod-promotion failure.
 ### Step 3 — Choose the LLM provider
 
 Start with `HAALAND_LLM_PROVIDER=fake`. Prove the plumbing works with zero
-spend, then switch to `anthropic` and set `HAALAND_ANTHROPIC_API_KEY`.
+spend, then switch to `deepseek` and set `HAALAND_DEEPSEEK_API_KEY` (keys:
+platform.deepseek.com -> API keys). Keep the `HAALAND_MODEL_*` defaults.
 
 ### Step 4 — Wire GitHub
 
@@ -247,7 +294,7 @@ separately and automatically: `build_checkpointer` calls
 curl -s localhost:8000/health                      # {"status":"ok"}
 open http://localhost:8000/docs                    # OpenAPI UI
 curl -s localhost:8000/api/incidents               # []
-curl -s localhost:8000/api/notifications/channels  # {"channels":[...]}
+curl -s localhost:8000/api/notifications/channels  # {"channels":[...],"lark_mode":"…"}
 curl -sX POST localhost:8000/api/notifications/test
 ```
 
@@ -280,7 +327,8 @@ Check the startup log line: `startup complete env=… llm_provider=…`.
 | `GET` | `/api/incidents/{reference}/audit` | hash-chained event timeline |
 | `GET` | `/api/incidents/{reference}/audit/verify` | recompute and verify the chain |
 | `GET` | `/api/incidents/{reference}/postmortem?as_markdown=true` | post-mortem (404 until generated) |
-| `GET` | `/api/notifications/channels` · `POST /api/notifications/test` | channel wiring check |
+| `GET` | `/api/notifications/channels` · `POST /api/notifications/test?target=` | channel wiring check; `target` overrides the destination for one message |
+| `GET` | `/api/notifications/lark/verify` · `/api/notifications/lark/chats` | Lark credentials check · chats the bot is in (`app` mode only) |
 | `GET` | `/health` · `/docs` | liveness · OpenAPI |
 
 Submission body (`DebugSessionRequest`):
@@ -568,8 +616,9 @@ records failures honestly.
 |---|---|---|
 | Worker restart mid-approval | at `awaiting_approval`: `docker compose kill worker && docker compose up -d worker`, then approve | resumes at the suspended node — checkpoints are in Postgres, keyed `thread_id = incident_id` |
 | No worker running | stop the worker, submit a session | `202` returned, status stays `detected` — proves the queue boundary |
-| Bad LLM key | set a garbage `HAALAND_ANTHROPIC_API_KEY` | auth error in worker logs, incident does not silently succeed |
-| Missing LLM key | `LLM_PROVIDER=anthropic`, key empty | **startup** `RuntimeError` — fail-fast, not a runtime surprise |
+| Bad LLM key | set a garbage `HAALAND_DEEPSEEK_API_KEY` | auth error in worker logs, incident does not silently succeed |
+| Missing LLM key | `LLM_PROVIDER=deepseek`, key empty | **startup** `RuntimeError` — fail-fast, not a runtime surprise |
+| Provider/model mismatch | `LLM_PROVIDER=anthropic` with `MODEL_PRIMARY=deepseek-v4-flash` | **startup** `ValueError` from `config.py` |
 | Bad GitHub token | garbage PAT | clone/PR failure surfaced in logs and the audit trail |
 | Unknown notify channel | `HAALAND_NOTIFY_CHANNELS=slack` | **startup** `ValueError: unknown notify channel: 'slack'` |
 | Lark misconfigured | `NOTIFY_CHANNELS=lark`, no URL | **startup** `RuntimeError` |
@@ -585,7 +634,8 @@ records failures honestly.
 |---|---|
 | `202` then nothing forever | ARQ worker not running |
 | Startup: `refusing to start in prod: …` | dev secrets or `CORS_ORIGINS=*` with `ENV=prod` |
-| Startup: `HAALAND_ANTHROPIC_API_KEY is required…` | provider set to `anthropic` without a key |
+| Startup: `HAALAND_DEEPSEEK_API_KEY is required…` | provider set to `deepseek` without a key |
+| Stage fails with `AIRefusalError`, `stop_reason=invalid_output` | DeepSeek returned json that missed the schema twice; check the stage prompt against `llm/templates/deepseek/README.md` |
 | Startup: `github_auth_mode=app requires…` | one of the three `APP_*` values missing |
 | `engine not initialised` | `init_engine` never ran — you imported a module outside the app/worker lifespan |
 | Clone fails on a private repo | anonymous fallback: `GITHUB_TOKEN` empty in `pat` mode |
@@ -604,8 +654,11 @@ Do not build a consumer against these — they exist only in the roadmap docs:
 - **`POST /webhooks/monitor`** and the `MonitorSignal` contract (docs/11 §1).
   The only ingestion path today is `POST /api/debug-sessions`.
 - **Log compaction** (docs/11 §2) — no signature grouping, no token cap on input.
-- **Lark interactive approve/reject callbacks** (docs/11 §4) — the shipped
-  adapter is a push-only custom webhook bot. Approvals happen over HTTP.
+- **Lark interactive approve/reject callbacks** (docs/11 §4, docs/13 §6) —
+  `POST /webhooks/lark/card` verifies signatures and answers Lark's URL
+  challenge, but a card button tap returns `501`: it needs a
+  `users.lark_open_id` mapping and role authorisation first. Approvals
+  happen over HTTP.
 - **Alertmanager and GitHub webhook ingestion** — verified then `501`.
 - **Session auth / seeded user table** — `current_user` is a placeholder.
 - **Slack, PagerDuty, Jira, ticketing** — `NullTicketProvider` only.
