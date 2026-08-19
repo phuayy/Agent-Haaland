@@ -28,7 +28,8 @@ services:
 
   api:
     build:
-      context: ./apps/api
+      context: .
+      dockerfile: apps/api/Dockerfile
     env_file: .env
     environment:
       HAALAND_ENV: compose
@@ -46,7 +47,8 @@ services:
 
   worker:
     build:
-      context: ./apps/api
+      context: .
+      dockerfile: apps/api/Dockerfile
     command: ["arq", "haaland.worker.WorkerSettings"]
     env_file: .env
     environment:

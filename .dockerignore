@@ -1,0 +1,33 @@
+# The api image now builds from the repo root (it needs the workspace
+# pyproject.toml + uv.lock), so everything the build does not need must be
+# excluded explicitly or the context balloons past a gigabyte.
+
+.git/
+.venv/
+**/.venv/
+**/__pycache__/
+*.py[oc]
+*.egg-info/
+build/
+dist/
+wheels/
+
+# Frontend — not part of the api image.
+apps/web/
+
+# Local caches produced by the host toolchain.
+**/.mypy_cache/
+**/.ruff_cache/
+**/.pytest_cache/
+**/.import_linter_cache/
+.codegraph/
+graphify-out/
+
+# Secrets: compose injects these via env_file at run time, never at build time.
+.env
+.env.*
+!.env.example
+
+# Disposable per-incident clones (services/workspace_service.py).
+.haaland-workspaces/
+demo/seed_repo/.git/

@@ -1,7 +1,34 @@
 [project]
 name = "agent-haaland"
 version = "0.1.0"
-description = "Add your description here"
+description = "Agent Haaland — AI incident response and debugging agent (monorepo root)"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+# The root is a thin shell: it exists so that a venv created here has the
+# backend and its tooling on the path. All real dependencies live in the
+# workspace member below.
+dependencies = [
+    "haaland-api",
+]
+
+[project.optional-dependencies]
+presidio = ["haaland-api[presidio]"]
+pdf = ["haaland-api[pdf]"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "respx>=0.22",
+    "testcontainers[postgres]>=4.9",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+    "ruff>=0.8",
+]
+
+[tool.uv.workspace]
+members = ["apps/api"]
+
+[tool.uv.sources]
+haaland-api = { workspace = true }

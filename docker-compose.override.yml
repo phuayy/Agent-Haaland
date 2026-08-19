@@ -2,14 +2,18 @@ services:
   api:
     command: ["uvicorn", "haaland.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     volumes:
-      - ./apps/api/src:/app/src
-      - ./apps/api/prompts:/app/prompts
-      - ./apps/api/templates:/app/templates
+      - ./apps/api/src:/app/apps/api/src
+      - ./apps/api/prompts:/app/apps/api/prompts
+      - ./apps/api/templates:/app/apps/api/templates
+      - ./apps/api/scripts:/app/apps/api/scripts
+      - ./apps/api/tests:/app/apps/api/tests
       - /var/run/docker.sock:/var/run/docker.sock
 
   worker:
     volumes:
-      - ./apps/api/src:/app/src
-      - ./apps/api/prompts:/app/prompts
-      - ./apps/api/templates:/app/templates
+      - ./apps/api/src:/app/apps/api/src
+      - ./apps/api/prompts:/app/apps/api/prompts
+      - ./apps/api/templates:/app/apps/api/templates
+      - ./apps/api/scripts:/app/apps/api/scripts
+      - ./apps/api/tests:/app/apps/api/tests
       - /var/run/docker.sock:/var/run/docker.sock

@@ -41,9 +41,6 @@ presidio = [
 pdf = [
     "weasyprint>=63.1",
 ]
-openai = [
-    "openai>=1.55",
-]
 
 [dependency-groups]
 dev = [
@@ -82,6 +79,9 @@ strict = true
 
 [tool.importlinter]
 root_package = "haaland"
+# The "services stay framework-free" contract names third-party modules, and
+# import-linter refuses to build the graph for those without this flag.
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "services stay framework-free"

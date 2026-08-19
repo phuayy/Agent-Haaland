@@ -271,11 +271,21 @@ service names, so `.env` values for those three are ignored inside containers.
 
 ```bash
 docker compose up -d postgres redis
-cd apps/api && uv sync            # add --extra openai / --extra presidio as needed
+uv sync                           # from the repo root; add --extra presidio / --extra pdf as needed
+cd apps/api
 uv run alembic upgrade head
 uv run uvicorn haaland.main:app --reload            # terminal 1
 uv run arq haaland.worker.WorkerSettings            # terminal 2  ← REQUIRED
 ```
+
+`uv sync` from the repo root is the one command that matters: the root
+`pyproject.toml` is a uv **workspace** whose only member is `apps/api`, so a
+single root `.venv` and a single root `uv.lock` cover the backend and all of
+its tooling. There is no separate lockfile under `apps/api` — running
+`uv sync` there resolves to the same workspace environment.
+
+The `openai` package is a required dependency, not an extra: the default
+provider (deepseek) speaks the OpenAI-compatible wire format through that SDK.
 
 > **The worker is not optional.** `POST /api/debug-sessions` only *enqueues*.
 > With no ARQ worker running, every submission returns `202` and then nothing
@@ -530,6 +540,10 @@ uv run ruff check src/
 uv run mypy src/haaland/services src/haaland/domain
 uv run lint-imports        # services stay framework-free; domain imports nothing of ours
 ```
+
+On Windows without GNU `make`, run the target's body directly — e.g.
+`docker compose exec api pytest -q`. Every target in the `Makefile` is a
+one-line wrapper around a `docker compose` invocation.
 
 The suite is offline by design (`tests/unit/`, `tests/redaction/`) and covers
 routing, the hash chain, workspace path containment, the redaction no-leakage
