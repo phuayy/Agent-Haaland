@@ -42,3 +42,4 @@ class EventType(StrEnum):
     INCIDENT_CLOSED = "incident.closed"
     HUMAN_NOTE = "human.note"
     BUDGET_EXCEEDED = "budget.exceeded"
+    RUN_FAILED = "run.failed"
