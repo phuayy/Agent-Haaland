@@ -127,4 +127,9 @@ async def generate_report_node(state, deps) -> dict:
                 payload={"kind": closing_message.kind, "detail": delivery.detail},
             )
 
+    # Terminal node for every path that cloned a workspace (approved and
+    # escalated alike) — delete the disposable clone or it outlives the
+    # incident on the instance's disk.
+    deps.workspace.cleanup(incident_id, state.get("workspace_path"))
+
     return {}

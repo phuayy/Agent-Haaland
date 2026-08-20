@@ -6,7 +6,7 @@ reaches this node."""
 
 from __future__ import annotations
 
-from haaland.agent.nodes._context import node_context
+from haaland.agent.nodes._context import node_context, workspace_from_state
 from haaland.domain.enums import ActorType
 from haaland.domain.events import EventType
 from haaland.integrations.scm.github import parse_repo_url
@@ -14,7 +14,7 @@ from haaland.integrations.scm.github import parse_repo_url
 
 async def push_branch_node(state, deps) -> dict:
     incident_id = state["incident_id"]
-    workspace = deps.workspace.reopen(incident_id, state["workspace_path"], state["base_sha"])
+    workspace = await workspace_from_state(deps, state)
     remediation = state["remediation"]
     diagnosis = state["diagnosis"]
     ref = parse_repo_url(state["repo_url"])

@@ -3,7 +3,7 @@ bug — see services/code_search_service.py."""
 
 from __future__ import annotations
 
-from haaland.agent.nodes._context import node_context
+from haaland.agent.nodes._context import node_context, workspace_from_state
 from haaland.domain.enums import ActorType, EvidenceKind
 from haaland.domain.events import EventType
 from haaland.services.code_search_service import extract_call_chain
@@ -11,7 +11,7 @@ from haaland.services.code_search_service import extract_call_chain
 
 async def locate_code_node(state, deps) -> dict:
     incident_id = state["incident_id"]
-    workspace = deps.workspace.reopen(incident_id, state["workspace_path"], state["base_sha"])
+    workspace = await workspace_from_state(deps, state)
 
     candidates = deps.code_search.locate(workspace, state["log_text"])
     call_chain = extract_call_chain(state["log_text"])

@@ -100,3 +100,38 @@ class WorkspaceService:
         checkpoints must be serialisable, and a git.Repo handle is not — so
         every node after prepare_workspace calls this instead of prepare()."""
         return Workspace(incident_id=incident_id, path=Path(path), base_sha=base_sha, repo=git.Repo(path))
+
+    async def ensure(
+        self, incident_id: uuid.UUID, *, repo_url: str, base_ref: str, path: str, base_sha: str
+    ) -> Workspace:
+        """Reopen the clone at `path`, or rebuild it at `base_sha` when the
+        directory is gone. Clones live on ephemeral disk (a container tmpdir):
+        a graph resumed after a restart or redeploy — the reject-then-redraft
+        path in particular — must not die on a workspace the platform wiped.
+        The rebuild pins the original base commit, never the branch head,
+        so a resumed run reasons about the same code the checkpoint did."""
+        candidate = Path(path)
+        if (candidate / ".git").exists():
+            return self.reopen(incident_id, path, base_sha)
+
+        workspace = await self.prepare(incident_id, repo_url, base_ref)
+        if workspace.base_sha != base_sha:
+            try:
+                await asyncio.to_thread(workspace.repo.git.checkout, base_sha)
+            except git.GitCommandError:
+                # base_sha fell outside the shallow clone window — fetch the
+                # exact commit (GitHub serves reachable SHA1s) and retry.
+                await asyncio.to_thread(workspace.repo.git.fetch, "origin", base_sha)
+                await asyncio.to_thread(workspace.repo.git.checkout, base_sha)
+            workspace.base_sha = base_sha
+        return workspace
+
+    def cleanup(self, incident_id: uuid.UUID, path: str | None = None) -> None:
+        """Delete the incident's disposable clone(s). Terminal nodes and the
+        crash handler call this — nothing else deletes workspaces, and only
+        paths inside the managed root are ever removed."""
+        shutil.rmtree(self._workdir_root / str(incident_id), ignore_errors=True)
+        if path:
+            candidate = Path(path)
+            if candidate.resolve().is_relative_to(self._workdir_root.resolve()):
+                shutil.rmtree(candidate, ignore_errors=True)

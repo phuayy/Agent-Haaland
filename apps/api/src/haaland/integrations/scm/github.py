@@ -56,9 +56,21 @@ class GitHubProvider:
         return base64.b64decode(data.content).decode("utf-8", errors="replace")
 
     async def create_branch(self, ref: RepoRef, branch_name: str, base_sha: str) -> None:
-        await self._client.rest.git.async_create_ref(
-            ref.owner, ref.repo, ref=f"refs/heads/{branch_name}", sha=base_sha
-        )
+        """Create the branch, or reset an existing one back to base_sha.
+        Branch names are deterministic per incident+strategy, so a rejected
+        draft's second pass (and a job replayed after a crash) reuses the
+        same branch — the redraft replaces the old commits rather than
+        failing on 422 "Reference already exists"."""
+        try:
+            await self._client.rest.git.async_create_ref(
+                ref.owner, ref.repo, ref=f"refs/heads/{branch_name}", sha=base_sha
+            )
+        except RequestFailed as exc:
+            if exc.response.status_code != 422:
+                raise
+            await self._client.rest.git.async_update_ref(
+                ref.owner, ref.repo, f"heads/{branch_name}", sha=base_sha, force=True
+            )
 
     async def commit_files(
         self, ref: RepoRef, branch_name: str, files: dict[str, str], message: str
@@ -98,10 +110,29 @@ class GitHubProvider:
         labels: list[str],
         reviewers: list[str],
     ) -> PullRequestResult:
-        pr = await self._client.rest.pulls.async_create(
-            ref.owner, ref.repo, title=title, body=body, head=branch_name, base=base_branch
-        )
-        number = pr.parsed_data.number
+        try:
+            pr = await self._client.rest.pulls.async_create(
+                ref.owner, ref.repo, title=title, body=body, head=branch_name, base=base_branch
+            )
+            number = pr.parsed_data.number
+            url = pr.parsed_data.html_url
+        except RequestFailed as exc:
+            # 422 "A pull request already exists for this head": the reject-
+            # then-redraft loop reuses the incident's branch, so refresh the
+            # open PR in place instead of failing the run.
+            if exc.response.status_code != 422:
+                raise
+            existing = await self._client.rest.pulls.async_list(
+                ref.owner, ref.repo, head=f"{ref.owner}:{branch_name}", state="open"
+            )
+            open_prs = existing.parsed_data
+            if not open_prs:
+                raise
+            number = open_prs[0].number
+            url = open_prs[0].html_url
+            await self._client.rest.pulls.async_update(
+                ref.owner, ref.repo, number, title=title, body=body
+            )
 
         if labels:
             await self._client.rest.issues.async_add_labels(ref.owner, ref.repo, number, labels=labels)
@@ -112,7 +143,7 @@ class GitHubProvider:
                     ref.owner, ref.repo, number, reviewers=reviewers
                 )
 
-        return PullRequestResult(number=number, url=pr.parsed_data.html_url, branch_name=branch_name)
+        return PullRequestResult(number=number, url=url, branch_name=branch_name)
 
     async def get_codeowners(self, ref: RepoRef, sha: str) -> str | None:
         for path in _CODEOWNERS_PATHS:

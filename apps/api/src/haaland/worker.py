@@ -45,3 +45,11 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(str(get_settings().redis_url))
+    # arq's default job_timeout is 300s; a real run (clone + tool-loop
+    # exploration + six LLM stages) routinely exceeds that, and a cancelled
+    # job strands the incident mid-flight with no FAILED transition.
+    job_timeout = get_settings().arq_job_timeout_seconds
+    # A graph invocation is not idempotent (LLM spend, branch pushes,
+    # notifications) — never let arq replay one automatically. Crash
+    # handling is _mark_failed in tasks/debug_session.py, not a retry.
+    max_tries = 1

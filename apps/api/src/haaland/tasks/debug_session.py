@@ -16,6 +16,17 @@ from haaland.logging import get_logger
 
 logger = get_logger(__name__)
 
+# LangGraph's default recursion_limit is 25 super-steps. The happy path is
+# ~15 nodes; each fix retry re-enters evaluate/apply/static (+tests), and a
+# human rejection re-enters the whole drafting loop — a legitimate run at
+# max_fix_attempts=3 plus one rejection exceeds 25. Sized so the ceiling
+# catches genuine runaways only, never behaviour the routing allows.
+_RECURSION_LIMIT = 100
+
+
+def _graph_config(incident_id: str) -> dict:
+    return {"configurable": {"thread_id": incident_id}, "recursion_limit": _RECURSION_LIMIT}
+
 
 async def _mark_failed(deps, incident_id: str, exc: Exception) -> None:
     """Nodes only ever move an incident forward on their own success path
@@ -40,12 +51,16 @@ async def _mark_failed(deps, incident_id: str, exc: Exception) -> None:
             )
     except (IllegalTransition, LookupError):
         logger.warning("could not mark incident failed", incident_id=incident_id, exc_info=True)
+    # A FAILED incident never resumes — its clone would otherwise sit on
+    # disk until the container dies (workspaces are only ever cleaned by
+    # generate_report on a completed run, or here on a crashed one).
+    deps.workspace.cleanup(uuid.UUID(incident_id))
 
 
 async def run_debug_session(ctx: dict, incident_id: str, initial_state: dict) -> None:
     graph = ctx["graph"]
     try:
-        await graph.ainvoke(initial_state, config={"configurable": {"thread_id": incident_id}})
+        await graph.ainvoke(initial_state, config=_graph_config(incident_id))
     except Exception as exc:
         logger.exception("debug session run failed", incident_id=incident_id)
         await _mark_failed(ctx["deps"], incident_id, exc)
@@ -55,9 +70,7 @@ async def run_debug_session(ctx: dict, incident_id: str, initial_state: dict) ->
 async def resume_debug_session(ctx: dict, incident_id: str, decision: dict) -> None:
     graph = ctx["graph"]
     try:
-        await graph.ainvoke(
-            Command(resume=decision), config={"configurable": {"thread_id": incident_id}}
-        )
+        await graph.ainvoke(Command(resume=decision), config=_graph_config(incident_id))
     except Exception as exc:
         logger.exception("debug session resume failed", incident_id=incident_id)
         await _mark_failed(ctx["deps"], incident_id, exc)

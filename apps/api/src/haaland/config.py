@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, RedisDsn, model_validator
+from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEV_SECRET_KEY = "dev-only-not-secure-change-me"
@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     secret_key: str = _DEV_SECRET_KEY
     vault_encryption_key: str = _DEV_VAULT_KEY
     cors_origins: str = "*"  # comma-separated; "*" is dev-only convenience
+    # Bearer token every /api/* route requires (webhooks carry their own
+    # HMAC/bearer verification instead). Unset = open, a dev-only
+    # convenience — prod refuses to start without it, same as the other
+    # dev defaults below.
+    api_auth_token: str | None = None
 
     # LLM — model_* names are provider-specific strings; they must match the
     # vocabulary of whichever llm_provider is selected (e.g. deepseek-v4-flash
@@ -99,6 +104,27 @@ class Settings(BaseSettings):
     # Alertmanager
     alertmanager_webhook_token: str | None = None
 
+    # Worker — ceiling for one debug-session job. The default arq timeout is
+    # 300s, which a real run (clone + tool-loop exploration + six LLM stages)
+    # exceeds routinely; a cancelled job strands the incident mid-flight.
+    arq_job_timeout_seconds: int = Field(default=1800, ge=60)
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_scheme(cls, value: object) -> object:
+        """Managed platforms (Render, Heroku) inject `postgres://` or
+        `postgresql://` URLs. SQLAlchemy 2 dropped the former and resolves
+        the latter to psycopg2, which is not installed — the only driver
+        this app ships for the runtime engine is asyncpg. Rewrite the bare
+        schemes instead of failing at first connect; explicit `+driver`
+        URLs pass through untouched."""
+        if isinstance(value, str):
+            if value.startswith("postgres://"):
+                value = "postgresql://" + value.removeprefix("postgres://")
+            if value.startswith("postgresql://"):
+                value = "postgresql+asyncpg://" + value.removeprefix("postgresql://")
+        return value
+
     @property
     def is_prod(self) -> bool:
         return self.env == "prod"
@@ -146,6 +172,11 @@ class Settings(BaseSettings):
                 problems.append("HAALAND_VAULT_ENCRYPTION_KEY is still the dev default")
             if self.cors_origins == "*":
                 problems.append("HAALAND_CORS_ORIGINS must not be '*' in prod")
+            if not self.api_auth_token:
+                problems.append(
+                    "HAALAND_API_AUTH_TOKEN is unset — the /api routes (including "
+                    "the approval gate) must not be open on a public URL"
+                )
             if problems:
                 raise ValueError("refusing to start in prod: " + "; ".join(problems))
         return self

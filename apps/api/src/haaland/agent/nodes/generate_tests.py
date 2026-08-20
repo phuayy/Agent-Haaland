@@ -9,7 +9,7 @@ loop's surface area tractable — noted here rather than silently narrowed."""
 
 from __future__ import annotations
 
-from haaland.agent.nodes._context import node_context
+from haaland.agent.nodes._context import node_context, workspace_from_state
 from haaland.domain.enums import ActorType
 from haaland.domain.events import EventType
 from haaland.domain.models import RegressionTest
@@ -18,7 +18,7 @@ from haaland.llm.rendering import render_test_input
 
 async def generate_tests_node(state, deps) -> dict:
     incident_id = state["incident_id"]
-    workspace = deps.workspace.reopen(incident_id, state["workspace_path"], state["base_sha"])
+    workspace = await workspace_from_state(deps, state)
     remediation = state["remediation"]
 
     async with node_context(deps) as ctx:

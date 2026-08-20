@@ -7,7 +7,7 @@ a `.github/workflows` edit either, so that check happens here in code
 
 from __future__ import annotations
 
-from haaland.agent.nodes._context import node_context
+from haaland.agent.nodes._context import node_context, workspace_from_state
 from haaland.domain.enums import ActorType
 from haaland.domain.errors import RemediationRejected
 from haaland.domain.events import EventType
@@ -18,7 +18,7 @@ from haaland.services.patch_service import apply_changes, combined_patch
 
 async def apply_patch_node(state, deps) -> dict:
     incident_id = state["incident_id"]
-    workspace = deps.workspace.reopen(incident_id, state["workspace_path"], state["base_sha"])
+    workspace = await workspace_from_state(deps, state)
 
     async with node_context(deps) as ctx:
         remediation = await ctx.llm_call.call(

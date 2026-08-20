@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import git
 
-from haaland.agent.nodes._context import node_context
+from haaland.agent.nodes._context import node_context, workspace_from_state
 from haaland.domain.enums import ActorType, CheckOutcome
 from haaland.domain.events import EventType
 from haaland.domain.models import TestValidation
@@ -26,7 +26,7 @@ def _infer_install_cmd(workspace) -> list[str] | None:
 
 async def run_tests_node(state, deps) -> dict:
     incident_id = state["incident_id"]
-    workspace = deps.workspace.reopen(incident_id, state["workspace_path"], state["base_sha"])
+    workspace = await workspace_from_state(deps, state)
     test = state["regression_test"]
     source_paths = [p for p in (state.get("changed_paths") or []) if p != test.file_path]
     install_cmd = _infer_install_cmd(workspace)

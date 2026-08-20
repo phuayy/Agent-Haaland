@@ -18,7 +18,7 @@ starts from ranked evidence, it doesn't replace the deterministic pass.
 
 from __future__ import annotations
 
-from haaland.agent.nodes._context import node_context
+from haaland.agent.nodes._context import node_context, workspace_from_state
 from haaland.domain.enums import ActorType, IncidentStatus
 from haaland.domain.errors import AIRefusalError
 from haaland.domain.events import EventType
@@ -42,7 +42,7 @@ async def _run_diagnosis(state, deps, ctx, incident_id, bundle) -> Diagnosis:
             output_schema=Diagnosis,
         )
 
-    workspace = deps.workspace.reopen(incident_id, workspace_path, state["base_sha"])
+    workspace = await workspace_from_state(deps, state)
     outcome = await ctx.tool_loop.run(
         incident_id=incident_id,
         stage="diagnose",

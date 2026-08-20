@@ -32,7 +32,10 @@ async def request_approval_node(state, deps) -> dict:
         }
     )
 
-    outcome = decision.get("decision", "approve")
+    # A resume payload without an explicit decision must never approve — the
+    # unknown/missing case falls through to "escalated", which re-suspends at
+    # this gate. Fail closed on the safety claim.
+    outcome = decision.get("decision", "escalate")
     actor = decision.get("actor", "unknown")
     reason = decision.get("reason")
 

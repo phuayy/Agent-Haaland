@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from haaland.agent.nodes._context import node_context
+from haaland.agent.nodes._context import node_context, workspace_from_state
 from haaland.domain.enums import ActorType
 from haaland.domain.events import EventType
 
 
 async def static_check_node(state, deps) -> dict:
     incident_id = state["incident_id"]
-    workspace = deps.workspace.reopen(incident_id, state["workspace_path"], state["base_sha"])
+    workspace = await workspace_from_state(deps, state)
     changed_paths = state.get("changed_paths") or []
     attempt = state.get("fix_attempt", 1)
 
@@ -35,6 +35,12 @@ async def static_check_node(state, deps) -> dict:
     reports = list(state.get("check_reports") or [])
     if report is not None:
         reports.append(report.model_dump(mode="json"))
+    else:
+        # A policy-rejected draft must still land a failing entry: the router
+        # reads `check_reports[-1]`, and on any attempt after a previously
+        # green one the stale "pass" would otherwise send an empty patch
+        # forward to generate_tests.
+        reports.append({"attempt": attempt, "outcome": outcome, "findings": []})
 
     return {
         "check_reports": reports,

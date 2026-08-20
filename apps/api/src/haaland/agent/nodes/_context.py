@@ -42,6 +42,19 @@ class NodeContext:
     tool_loop: ToolLoopService | None
 
 
+async def workspace_from_state(deps, state):
+    """The one way nodes obtain the workspace clone: reopen it, or rebuild
+    it at the checkpointed base_sha when the platform's ephemeral disk wiped
+    it between suspension and resume (services/workspace_service.py)."""
+    return await deps.workspace.ensure(
+        state["incident_id"],
+        repo_url=state["repo_url"],
+        base_ref=state["base_ref"],
+        path=state["workspace_path"],
+        base_sha=state["base_sha"],
+    )
+
+
 @asynccontextmanager
 async def node_context(deps) -> AsyncIterator[NodeContext]:
     async with session_scope() as session:
