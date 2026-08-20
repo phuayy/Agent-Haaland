@@ -17,6 +17,7 @@ class EventType(StrEnum):
     PII_REDACTED = "pii.redacted"
     AI_CLASSIFIED = "ai.classified"
     CODE_LOCATED = "code.located"
+    AI_EXPLORED = "ai.explored"
     AI_DIAGNOSED = "ai.diagnosed"
     AI_FIX_EVALUATED = "ai.fix_evaluated"
     AI_REMEDIATION_DRAFTED = "ai.remediation_drafted"

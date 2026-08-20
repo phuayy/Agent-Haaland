@@ -21,6 +21,14 @@ from haaland.llm.providers.deepseek import (
     extract_json,
     schema_block,
 )
+from haaland.llm.tools import (
+    AssistantTurn,
+    ToolCall,
+    ToolExchange,
+    ToolLoopRequest,
+    ToolOutcome,
+    ToolSpec,
+)
 
 
 class Answer(BaseModel):
@@ -214,3 +222,101 @@ def test_usage_without_cache_fields_counts_everything_as_a_miss() -> None:
 
     assert usage.input_tokens == 500
     assert usage.cache_read_tokens == 0
+
+
+# -- tool loop (explore/conclude) --------------------------------------------
+
+
+def _tool_response(*, content: str | None = None, tool_calls=None, finish_reason: str = "stop"):
+    class _Message:
+        """SimpleNamespace can't model_dump(); the provider replays the raw
+        assistant message, so the stub needs that method too."""
+
+        def __init__(self) -> None:
+            self.content = content
+            self.tool_calls = tool_calls
+
+        def model_dump(self, exclude_none: bool = False) -> dict:
+            out: dict = {"role": "assistant", "content": self.content}
+            if self.tool_calls:
+                out["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in self.tool_calls
+                ]
+            return out
+
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=_Message(), finish_reason=finish_reason)],
+        usage=_usage(prompt_miss=100, completion=50),
+    )
+
+
+def _loop_request(transcript=None) -> ToolLoopRequest:
+    return ToolLoopRequest(
+        stage="diagnose",
+        system_blocks=["base instructions", "stage instructions"],
+        user_content=RedactedPayload("[REDACTED] log line"),
+        output_schema=Answer,
+        tools=[ToolSpec(name="grep", description="search", input_schema={"type": "object"})],
+        transcript=transcript or [],
+    )
+
+
+async def test_explore_parses_tool_calls_and_disables_thinking_and_json_mode() -> None:
+    tool_call = SimpleNamespace(
+        id="call_1", function=SimpleNamespace(name="grep", arguments='{"pattern": "len"}')
+    )
+    provider, completions = _provider(
+        [_tool_response(content="looking", tool_calls=[tool_call], finish_reason="tool_calls")]
+    )
+
+    turn = await provider.explore(_loop_request())
+
+    assert turn.turn.tool_calls == (ToolCall(id="call_1", name="grep", arguments={"pattern": "len"}),)
+    assert turn.result.stop_reason == "tool_use"
+    assert turn.result.parsed is None
+
+    sent = completions.calls[0]
+    # Function calling is incompatible with DeepSeek thinking mode, and JSON
+    # mode must not gag the exploration turns.
+    assert "extra_body" not in sent
+    assert "response_format" not in sent
+    assert sent["tools"][0]["function"]["name"] == "grep"
+    # No schema block during exploration — only the conclude turn asks for json.
+    assert "JSON Schema" not in sent["messages"][0]["content"]
+
+
+async def test_conclude_replays_transcript_with_schema_block_and_tools_off() -> None:
+    provider, completions = _provider([_response('{"severity": "P1", "confidence": 0.9}')])
+    transcript = [
+        ToolExchange(
+            turn=AssistantTurn(
+                text="looking",
+                tool_calls=(ToolCall(id="call_1", name="grep", arguments={"pattern": "len"}),),
+            ),
+            outcomes=(
+                ToolOutcome(
+                    call_id="call_1", name="grep", content=RedactedPayload("app/pricing.py:6: hit")
+                ),
+            ),
+        )
+    ]
+
+    result = await provider.conclude(_loop_request(transcript))
+
+    assert result.parsed == Answer(severity="P1", confidence=0.9)
+    sent = completions.calls[0]
+    assert sent["response_format"] == {"type": "json_object"}
+    assert sent["tool_choice"] == "none"
+    assert "JSON Schema" in sent["messages"][0]["content"]
+    roles = [m["role"] for m in sent["messages"]]
+    assert roles == ["system", "user", "assistant", "tool"]
+    assert sent["messages"][3] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": "app/pricing.py:6: hit",
+    }

@@ -1,6 +1,20 @@
 """Stage 2. Highest effort setting (docs/05). `supporting_evidence` has
 min_length=1 on the schema — an unevidenced root cause is structurally
-impossible to emit."""
+impossible to emit.
+
+Two diagnosis paths, chosen at runtime:
+
+- *agentic* (services/tool_loop_service.py): the model explores the
+  workspace clone itself — grep, read_file, glob, list_dir, find_symbol —
+  before committing to a root cause. Requires a tool-capable provider and
+  HAALAND_AGENTIC_DIAGNOSIS_ENABLED (default on).
+- *single-shot*: the pre-existing path — the model reasons only over the
+  candidates locate_code ranked. Used when the provider isn't tool-capable
+  (fake, openai), when the flag is off, or when no workspace exists.
+
+Either way the same locate_code candidates seed the prompt: exploration
+starts from ranked evidence, it doesn't replace the deterministic pass.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +24,44 @@ from haaland.domain.errors import AIRefusalError
 from haaland.domain.events import EventType
 from haaland.domain.models import Diagnosis
 from haaland.llm.rendering import render_diagnosis_input
+from haaland.services.code_toolbox import CodeToolbox
+
+
+async def _run_diagnosis(state, deps, ctx, incident_id, bundle) -> Diagnosis:
+    workspace_path = state.get("workspace_path")
+    use_tool_loop = (
+        ctx.tool_loop is not None
+        and deps.settings.agentic_diagnosis_enabled
+        and workspace_path is not None
+    )
+    if not use_tool_loop:
+        return await ctx.llm_call.call(
+            incident_id=incident_id,
+            stage="diagnose",
+            redacted_text=render_diagnosis_input(bundle),
+            output_schema=Diagnosis,
+        )
+
+    workspace = deps.workspace.reopen(incident_id, workspace_path, state["base_sha"])
+    outcome = await ctx.tool_loop.run(
+        incident_id=incident_id,
+        stage="diagnose",
+        redacted_text=render_diagnosis_input(bundle),
+        output_schema=Diagnosis,
+        toolbox=CodeToolbox(workspace),
+    )
+    await ctx.audit.record(
+        incident_id,
+        EventType.AI_EXPLORED.value,
+        actor_type=ActorType.AI,
+        actor_label="diagnose",
+        summary=(
+            f"Explored workspace: {outcome.tool_calls} tool call(s) over "
+            f"{outcome.turns} model turn(s)"
+        ),
+        payload={"tool_calls": outcome.tool_calls, "turns": outcome.turns},
+    )
+    return outcome.parsed
 
 
 async def diagnose_node(state, deps) -> dict:
@@ -18,12 +70,7 @@ async def diagnose_node(state, deps) -> dict:
 
     async with node_context(deps) as ctx:
         try:
-            diagnosis = await ctx.llm_call.call(
-                incident_id=incident_id,
-                stage="diagnose",
-                redacted_text=render_diagnosis_input(bundle),
-                output_schema=Diagnosis,
-            )
+            diagnosis = await _run_diagnosis(state, deps, ctx, incident_id, bundle)
         except AIRefusalError:
             await ctx.audit.record(
                 incident_id,

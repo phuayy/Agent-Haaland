@@ -10,8 +10,20 @@ import uuid
 from collections.abc import Callable
 
 from haaland.domain.models import EvidenceBundle, RedactionResult
+from haaland.llm.base import RedactedPayload
 from haaland.redaction.recognizers import RECOGNIZERS
 from haaland.redaction.vault import TokenVault
+
+
+def _counters_from(mapping: dict[str, str]) -> dict[str, int]:
+    """Rebuild per-entity counters from an existing token mapping so newly
+    minted tokens continue the sequence instead of colliding with it."""
+    counters: dict[str, int] = {}
+    for token in mapping:
+        entity, _, n = token.strip("<>").rpartition("_")
+        if entity and n.isdigit():
+            counters[entity] = max(counters.get(entity, 0), int(n))
+    return counters
 
 
 class Redactor:
@@ -50,6 +62,21 @@ class Redactor:
         if isinstance(obj, list):
             return [self._tokenize_obj(v, mapping, counters) for v in obj]
         return obj
+
+    async def redact_text(self, incident_id: uuid.UUID, text: str) -> RedactedPayload:
+        """Tokenize free text produced mid-incident (tool-loop output) with
+        incident-stable tokens: the incident's existing vault mapping is
+        reloaded so <ACCOUNT_1> here is the same account the log lines called
+        <ACCOUNT_1>, and any newly minted tokens are persisted back for
+        rehydration. Vault failures raise RedactionUnavailable — fail closed,
+        same as redact_bundle."""
+        mapping = await self._vault.read(incident_id) or {}
+        counters = _counters_from(mapping)
+        known_tokens = len(mapping)
+        out = self._tokenize(text, mapping, counters)
+        if len(mapping) != known_tokens:
+            await self._vault.write(incident_id, mapping)
+        return RedactedPayload(out)
 
     async def redact_bundle(
         self, incident_id: uuid.UUID, bundle: EvidenceBundle

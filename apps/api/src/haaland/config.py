@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     model_report: str = "deepseek-v4-pro"
     llm_max_usd_per_incident: float = 2.00
     llm_max_usd_per_day: float = 50.00
+    # Agentic exploration — the read/grep tool loop the diagnose stage runs
+    # over the workspace clone (services/tool_loop_service.py). Providers that
+    # aren't tool-capable (fake, openai) fall back to single-shot diagnosis
+    # regardless of this flag, so it is inert in offline/CI runs.
+    agentic_diagnosis_enabled: bool = True
+    tool_loop_max_iterations: int = Field(default=12, ge=1, le=50)
 
     # GitHub — `app` is the production mode (least-privilege, revocable,
     # short-lived installation tokens); `pat` is the single-dev fallback.

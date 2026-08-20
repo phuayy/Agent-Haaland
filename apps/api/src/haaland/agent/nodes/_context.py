@@ -19,9 +19,11 @@ from haaland.db.repositories.notifications import NotificationRepository
 from haaland.db.repositories.redaction_maps import RedactionMapRepository
 from haaland.db.repositories.remediations import RemediationRepository
 from haaland.db.session import session_scope
+from haaland.llm.tools import supports_tool_loop
 from haaland.services.audit_service import AuditService
 from haaland.services.incident_service import IncidentService
 from haaland.services.llm_call_service import LLMCallService
+from haaland.services.tool_loop_service import ToolLoopService
 
 
 @dataclass
@@ -35,6 +37,9 @@ class NodeContext:
     audit: AuditService
     incident_service: IncidentService
     llm_call: LLMCallService
+    # None when the configured provider isn't tool-capable (fake, openai) —
+    # nodes fall back to the single-shot llm_call path.
+    tool_loop: ToolLoopService | None
 
 
 @asynccontextmanager
@@ -44,6 +49,17 @@ async def node_context(deps) -> AsyncIterator[NodeContext]:
         audit = AuditService(events_repo)
         incidents_repo = IncidentRepository(session)
         analyses_repo = AIAnalysisRepository(session)
+        tool_loop = (
+            ToolLoopService(
+                deps.llm,
+                analyses_repo,
+                deps.budget,
+                deps.redactor,
+                max_iterations=deps.settings.tool_loop_max_iterations,
+            )
+            if supports_tool_loop(deps.llm)
+            else None
+        )
         yield NodeContext(
             session=session,
             incidents=incidents_repo,
@@ -54,4 +70,5 @@ async def node_context(deps) -> AsyncIterator[NodeContext]:
             audit=audit,
             incident_service=IncidentService(incidents_repo, audit),
             llm_call=LLMCallService(deps.llm, analyses_repo, deps.budget),
+            tool_loop=tool_loop,
         )

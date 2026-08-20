@@ -9,7 +9,7 @@ import asyncio
 import shutil
 import tempfile
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,8 +44,20 @@ class Workspace:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
 
-    def iter_python_files(self):
+    def resolve(self, relative_path: str) -> Path | None:
+        """Public containment check for read-only tooling (the code toolbox);
+        same rule as read_file, without reading."""
+        return self._contained(relative_path)
+
+    def iter_python_files(self) -> Iterator[Path]:
         yield from self.path.rglob("*.py")
+
+    def iter_files(self) -> Iterator[Path]:
+        """Every regular file in the clone except VCS internals. Callers
+        (the code toolbox) apply their own size/binary/vendor-dir filters."""
+        for path in self.path.rglob("*"):
+            if path.is_file() and ".git" not in path.parts:
+                yield path
 
     def close(self) -> None:
         shutil.rmtree(self.path, ignore_errors=True)

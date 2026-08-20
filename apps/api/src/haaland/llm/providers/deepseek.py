@@ -41,6 +41,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 
 from haaland.llm.base import LLMRequest, LLMResult, Usage
+from haaland.llm.tools import AssistantTurn, ToolCall, ToolLoopRequest, ToolSpec, ToolTurnResult
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
@@ -137,7 +138,11 @@ class DeepSeekProvider:
         ]
 
     async def _complete(
-        self, model: str, request: LLMRequest, messages: list[dict[str, str]]
+        self,
+        model: str,
+        request: LLMRequest | ToolLoopRequest,
+        messages: list[dict[str, Any]],
+        extra_kwargs: dict[str, Any] | None = None,
     ) -> tuple[str, str, Any, Any]:
         kwargs: dict[str, Any] = dict(
             model=model,
@@ -145,6 +150,7 @@ class DeepSeekProvider:
             max_tokens=request.max_tokens,
             response_format={"type": "json_object"},
             reasoning_effort=_EFFORT_MAP.get(request.effort, "high"),
+            **(extra_kwargs or {}),
         )
         if self._thinking:
             kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
@@ -201,9 +207,19 @@ class DeepSeekProvider:
         )
 
     async def generate(self, request: LLMRequest) -> LLMResult:
-        start = time.perf_counter()
         model = request.model or self._default_model
-        messages = self._messages(request)
+        return await self._run_structured(model, request, self._messages(request))
+
+    async def _run_structured(
+        self,
+        model: str,
+        request: LLMRequest | ToolLoopRequest,
+        messages: list[dict[str, Any]],
+        extra_kwargs: dict[str, Any] | None = None,
+    ) -> LLMResult:
+        """JSON-mode completion validated against request.output_schema, with
+        the repair retry — shared by generate() and conclude()."""
+        start = time.perf_counter()
 
         total = Usage()
         finish_reason = "stop"
@@ -211,7 +227,9 @@ class DeepSeekProvider:
         parsed: BaseModel | None = None
 
         for attempt in range(self._repair_attempts + 1):
-            text, finish_reason, raw_usage, raw = await self._complete(model, request, messages)
+            text, finish_reason, raw_usage, raw = await self._complete(
+                model, request, messages, extra_kwargs
+            )
             total = self._accumulate(total, self._usage(raw_usage))
 
             if finish_reason == "content_filter":
@@ -250,4 +268,115 @@ class DeepSeekProvider:
             model=model,
             provider=self.name,
             raw=raw,
+        )
+
+    # -- tool loop (llm/tools.py) ---------------------------------------
+
+    @staticmethod
+    def _tool_defs(tools: list[ToolSpec]) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {"name": t.name, "description": t.description, "parameters": t.input_schema},
+            }
+            for t in tools
+        ]
+
+    def _loop_messages(
+        self, request: ToolLoopRequest, *, include_schema_block: bool
+    ) -> list[dict[str, Any]]:
+        """The schema block is appended only on the conclude turn — during
+        exploration the model must feel free to emit tool calls and prose,
+        not a premature json object."""
+        blocks = list(request.system_blocks)
+        if include_schema_block:
+            blocks.append(schema_block(request.output_schema))
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": "\n\n".join(blocks)},
+            {"role": "user", "content": request.user_content.text},
+        ]
+        for exchange in request.transcript:
+            turn = exchange.turn
+            if turn.raw is not None:
+                messages.append(turn.raw)
+            else:
+                msg: dict[str, Any] = {"role": "assistant", "content": turn.text or None}
+                if turn.tool_calls:
+                    msg["tool_calls"] = [
+                        {
+                            "id": c.id,
+                            "type": "function",
+                            "function": {"name": c.name, "arguments": json.dumps(c.arguments)},
+                        }
+                        for c in turn.tool_calls
+                    ]
+                messages.append(msg)
+            for outcome in exchange.outcomes:
+                messages.append(
+                    {"role": "tool", "tool_call_id": outcome.call_id, "content": outcome.content.text}
+                )
+        return messages
+
+    async def explore(self, request: ToolLoopRequest) -> ToolTurnResult:
+        start = time.perf_counter()
+        model = request.model or self._default_model
+
+        # Thinking is deliberately NOT enabled on exploration turns:
+        # DeepSeek's thinking mode does not support function calling. The
+        # conclude turn has no tool calls to make and re-enables it.
+        resp = await self._client.chat.completions.create(
+            model=model,
+            messages=self._loop_messages(request, include_schema_block=False),
+            max_tokens=request.max_tokens,
+            tools=self._tool_defs(request.tools),
+            reasoning_effort=_EFFORT_MAP.get(request.effort, "high"),
+        )
+        choice = resp.choices[0]
+        message = choice.message
+
+        calls: list[ToolCall] = []
+        for tc in message.tool_calls or []:
+            try:
+                arguments = json.loads(tc.function.arguments or "{}")
+            except ValueError:
+                # Malformed arguments become an executable-but-failing call so
+                # the toolbox can hand the model a correctable error.
+                arguments = {"_malformed_arguments": tc.function.arguments}
+            calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=arguments))
+
+        if choice.finish_reason == "content_filter":
+            stop_reason = "refusal"
+        elif calls:
+            stop_reason = "tool_use"
+        else:
+            stop_reason = choice.finish_reason or "stop"
+
+        usage = self._usage(resp.usage)
+        raw_message = message.model_dump(exclude_none=True)
+        # DeepSeek rejects requests whose history contains reasoning_content.
+        raw_message.pop("reasoning_content", None)
+        turn = AssistantTurn(text=message.content or "", tool_calls=tuple(calls), raw=raw_message)
+        return ToolTurnResult(
+            turn=turn,
+            result=LLMResult(
+                parsed=None,
+                stop_reason=stop_reason,
+                usage=usage,
+                cost_usd=_cost_usd(model, usage),
+                latency_ms=int((time.perf_counter() - start) * 1000),
+                model=model,
+                provider=self.name,
+                raw=resp,
+            ),
+        )
+
+    async def conclude(self, request: ToolLoopRequest) -> LLMResult:
+        model = request.model or self._default_model
+        # tools + tool_choice="none" (rather than omitting tools) so the API
+        # can resolve the tool_calls already present in the replayed history.
+        extra: dict[str, Any] = {}
+        if request.transcript:
+            extra = {"tools": self._tool_defs(request.tools), "tool_choice": "none"}
+        return await self._run_structured(
+            model, request, self._loop_messages(request, include_schema_block=True), extra
         )
