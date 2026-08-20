@@ -1,0 +1,119 @@
+# Standalone production stack for a single Google Cloud Compute Engine VM.
+#
+# Run it with an explicit -f and nothing else:
+#
+#   docker compose -f infra/gcp/docker-compose.prod.yml up -d --build
+#
+# Naming the file suppresses the automatic pickup of docker-compose.override.yml,
+# which mounts host source and runs uvicorn --reload — both wrong on a public box.
+#
+# Differences from the root docker-compose.yml, all deliberate:
+#   - Postgres and Redis publish no host ports. The root file binds 5432 and
+#     6379 to 0.0.0.0, which on a VM with a public IP means an internet-facing
+#     database with the password `haaland`. Here they are reachable only over
+#     the compose network, by name.
+#   - The API is not published either. Caddy terminates TLS and is the only
+#     process listening on the public interface.
+#   - Postgres credentials come from the environment so the demo does not run
+#     on a password committed to git.
+#   - restart: unless-stopped, so a VM reboot brings the stack back.
+
+name: haaland
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in infra/gcp/.env.compose}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/gcp/.env.compose}
+      POSTGRES_DB: ${POSTGRES_DB:-haaland}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../../infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # noeviction: this Redis holds the arq job queue and the AES-GCM token
+    # vault. Evicting a key under memory pressure loses a job or the map
+    # needed to un-redact a finding — both silent failures.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      HAALAND_ENV: prod
+      HAALAND_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-haaland}
+      HAALAND_REDIS_URL: redis://redis:6379/0
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # DockerRunner sandbox: generated tests execute in a throwaway sibling
+      # container instead of inside this one. Mounting the socket grants this
+      # container root-equivalent control of the VM — acceptable on a
+      # single-tenant demo box, never on shared infrastructure.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${GITHUB_APP_PEM_PATH:-/dev/null}:/run/secrets/github-app.pem:ro
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    command: ["arq", "haaland.worker.WorkerSettings"]
+    env_file: ../../.env
+    environment:
+      HAALAND_ENV: prod
+      HAALAND_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-haaland}
+      HAALAND_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${GITHUB_APP_PEM_PATH:-/dev/null}:/run/secrets/github-app.pem:ro
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      HAALAND_DOMAIN: ${HAALAND_DOMAIN:?set HAALAND_DOMAIN in infra/gcp/.env.compose}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:

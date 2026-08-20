@@ -22,7 +22,9 @@ This folder is the full engineering plan: architecture, technology choices with 
 | 11 | [MVP Starter Plan](11-mvp-plan.md) | **Start here to build.** What to cut, what to build first, five milestones with runnable gates |
 | 11 | [Monitoring Trigger & Lark](11-monitoring-trigger-integration.md) | Generic monitoring-platform ingestion contract, log compaction, Lark approval flow |
 | 12 | [Setup & Integration Guide](12-setup-and-integration-guide.md) | Every setting, how to launch and verify, what is *actually* implemented |
+| 12 | [Render Deploy](12-render-deploy.md) | Blueprint deploy to Render, and the two platform constraints it accepts |
 | 13 | [Lark Integration](13-lark-integration.md) | Connecting a Lark organisation, both bot transports, step-by-step verification |
+| 14 | [Google Cloud VM Deploy](14-gcp-vm-deploy.md) | Single-VM demo host: specs, TLS, and the Prometheus/Alertmanager trigger URL |
 
 ## The 60-second version
 

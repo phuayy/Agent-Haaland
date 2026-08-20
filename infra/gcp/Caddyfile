@@ -1,0 +1,31 @@
+# TLS terminator and the only public listener on the VM.
+#
+# Caddy obtains and renews a Let's Encrypt certificate for $HAALAND_DOMAIN
+# automatically, which is why the webhook URL handed to Alertmanager is
+# https:// and the bearer token is never sent in clear.
+
+{$HAALAND_DOMAIN} {
+	encode zstd gzip
+
+	# Alertmanager and any other monitoring platform post here. Left open to
+	# the internet because the sender's egress IP is often not fixed; the
+	# handler verifies a bearer token before parsing the body.
+	handle /webhooks/* {
+		reverse_proxy api:8000
+	}
+
+	handle /health {
+		reverse_proxy api:8000
+	}
+
+	# First-party API and the interactive OpenAPI page used for the demo.
+	# Every /api/* route requires HAALAND_API_AUTH_TOKEN (api/security.py).
+	handle {
+		reverse_proxy api:8000
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,32 @@
+# Alertmanager routing that delivers to Agent Haaland.
+#
+# Two things matter here:
+#   1. `send_resolved: false` — the handler ignores resolved notifications
+#      anyway, so not sending them saves a pointless round trip.
+#   2. The bearer token must equal HAALAND_ALERTMANAGER_WEBHOOK_TOKEN in the
+#      VM's .env. Prefer authorization.credentials_file over an inline value
+#      if this config is version controlled.
+#
+# repeat_interval is deliberately longer than Haaland's dedupe window
+# (HAALAND_DEDUPE_WINDOW_SECONDS, default 300s). A repeat that lands inside
+# the window is deduplicated and returns 202 "deduplicated"; one that lands
+# outside it opens a second incident, which is the correct behaviour for an
+# alert still firing hours later.
+
+route:
+  receiver: haaland
+  group_by: [alertname, service]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: haaland
+    webhook_configs:
+      - url: https://REPLACE-WITH-YOUR-DOMAIN/webhooks/alertmanager
+        send_resolved: false
+        max_alerts: 20
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: REPLACE_WITH_HAALAND_ALERTMANAGER_WEBHOOK_TOKEN

@@ -1,0 +1,39 @@
+# Prometheus alerting rules that Agent Haaland can act on.
+#
+# The only Haaland-specific requirement is the `repo_url` annotation: it tells
+# the webhook which repository to clone and diff against. Alertmanager sends a
+# fixed payload shape with no body templating, so the routing decision has to
+# ride along as alert metadata — keeping it on the rule means the person who
+# knows which service broke is the person who declares which repo owns it.
+#
+# Optional annotations:
+#   repo_ref     branch to base the fix on (default: main)
+# Optional labels (first present wins for the incident's service name):
+#   service, service_name, job, alertname
+
+groups:
+  - name: haaland-demo
+    rules:
+      - alert: HighErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) by (service)
+              / sum(rate(http_requests_total[5m])) by (service) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          service: payments-api
+        annotations:
+          summary: "5xx rate above 5% on {{ $labels.service }}"
+          description: "Error ratio {{ $value | humanizePercentage }} over the last 5 minutes."
+          repo_url: "https://github.com/acme/payments-api"
+          repo_ref: "main"
+
+      - alert: PaymentsApiDown
+        expr: up{job="payments-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: payments-api
+        annotations:
+          summary: "payments-api target is down"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for 1 minute."
+          repo_url: "https://github.com/acme/payments-api"
