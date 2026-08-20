@@ -154,7 +154,12 @@ class LarkAppClient:
                     method, path, json=json_body, params=params, headers=headers
                 )
         except httpx.HTTPError as exc:
-            raise LarkAPIError(f"lark api unreachable ({method} {path}): {exc}") from exc
+            # httpx timeout exceptions carry an empty str(); without the class
+            # name the operator gets "unreachable: " and no way to tell a DNS
+            # failure from a read timeout.
+            raise LarkAPIError(
+                f"lark api unreachable ({method} {path}): {type(exc).__name__}: {exc}".rstrip(": ")
+            ) from exc
 
         try:
             body = resp.json()
