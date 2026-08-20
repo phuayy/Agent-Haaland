@@ -7,6 +7,7 @@ services:
       - ./apps/api/templates:/app/apps/api/templates
       - ./apps/api/scripts:/app/apps/api/scripts
       - ./apps/api/tests:/app/apps/api/tests
+      - ./secrets/github-app.pem:/run/secrets/github-app.pem:ro
       - /var/run/docker.sock:/var/run/docker.sock
 
   worker:
@@ -16,4 +17,5 @@ services:
       - ./apps/api/templates:/app/apps/api/templates
       - ./apps/api/scripts:/app/apps/api/scripts
       - ./apps/api/tests:/app/apps/api/tests
+      - ./secrets/github-app.pem:/run/secrets/github-app.pem:ro
       - /var/run/docker.sock:/var/run/docker.sock

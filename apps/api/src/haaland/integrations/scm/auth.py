@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Protocol
 
 from githubkit import AppAuthStrategy, GitHub, TokenAuthStrategy, UnauthAuthStrategy
@@ -80,7 +81,7 @@ class AppCredentials:
         )
         data = resp.parsed_data
         self._cached_token = data.token
-        self._cached_expiry = data.expires_at.timestamp()
+        self._cached_expiry = datetime.fromisoformat(data.expires_at.replace("Z", "+00:00")).timestamp()
         return self._cached_token
 
 

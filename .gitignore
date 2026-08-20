@@ -22,3 +22,6 @@ demo/seed_repo/.git/
 # graphify skill output (generated knowledge graph, cache, reports)
 graphify-out/
 
+
+# GitHub App private key (PEM) — never commit
+secrets/
