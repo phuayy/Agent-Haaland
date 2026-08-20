@@ -3,20 +3,23 @@ import { HealthStatus } from "@/lib/types";
 
 const HEALTH_CONFIG: Record<
   HealthStatus,
-  { label: string; className: string; pulse?: boolean }
+  { label: string; className: string; dot: string; pulse?: boolean }
 > = {
   healthy: {
-    label: "🟢 Healthy",
-    className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+    label: "Healthy",
+    className: "bg-emerald-50 text-emerald-600 border-emerald-200",
+    dot: "bg-emerald-600",
   },
   p1: {
-    label: "🔴 P1 Active",
-    className: "bg-red-500/10 text-red-400 border-red-500/30",
+    label: "P1 active",
+    className: "bg-rose-50 text-rose-600 border-rose-200",
+    dot: "bg-rose-600",
     pulse: true,
   },
   p2: {
-    label: "🟠 P2 Active",
-    className: "bg-orange-500/10 text-orange-400 border-orange-500/30",
+    label: "P2 active",
+    className: "bg-orange-50 text-orange-700 border-orange-200",
+    dot: "bg-orange-500",
     pulse: true,
   },
 };
@@ -26,26 +29,16 @@ export function HealthBadge({ status }: { status: HealthStatus }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium",
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-wide uppercase",
         config.className
       )}
     >
-      {config.pulse && (
-        <span className="relative flex h-1.5 w-1.5">
-          <span
-            className={cn(
-              "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
-              status === "p1" ? "bg-red-400" : "bg-orange-400"
-            )}
-          />
-          <span
-            className={cn(
-              "relative inline-flex h-1.5 w-1.5 rounded-full",
-              status === "p1" ? "bg-red-400" : "bg-orange-400"
-            )}
-          />
-        </span>
-      )}
+      <span className="relative flex h-1.5 w-1.5">
+        {config.pulse && (
+          <span className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-75", config.dot)} />
+        )}
+        <span className={cn("relative inline-flex h-1.5 w-1.5 rounded-full", config.dot)} />
+      </span>
       {config.label}
     </span>
   );

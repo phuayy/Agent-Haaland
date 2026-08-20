@@ -1,4 +1,11 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(HAALAND_VAULT_ENCRYPTION_KEY=x uv run python -c ' *)",
+      "Bash(tail -80 /tmp/next-dev.log)",
+      "Read(//tmp/**)"
+    ]
+  },
   "enabledPlugins": {
     "caveman@caveman": true
   }
