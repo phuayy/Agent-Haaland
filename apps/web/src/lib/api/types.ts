@@ -41,6 +41,12 @@ export interface IncidentSummary {
 export interface IncidentDetail {
   reference: string;
   title: string;
+  /**
+   * The registry name of the service the incident was opened against. Null
+   * for incidents whose registry row was deleted; the API reads it from the
+   * `services` table rather than parsing it back out of `title`.
+   */
+  service_name: string | null;
   status: IncidentStatus;
   severity: Severity | null;
   severity_confidence: number | null;
@@ -97,11 +103,41 @@ export interface EvidenceSourceContent {
   confidence: number;
 }
 
+/** One stack frame off the ingested traceback. See apps/api domain/models.py. */
+export interface TraceFrame {
+  /**
+   * Index in the traceback, which is the order the request travelled: 0 is
+   * the outermost entry point, the highest depth is the raise site.
+   */
+  depth: number;
+  path: string;
+  line: number;
+  function: string | null;
+}
+
+/**
+ * The `trace` evidence row written by the locate_code node — the failure
+ * path parsed off the log before the model reasons about it. The row is
+ * absent entirely when the log carried no traceback and no error signature,
+ * which is the ordinary alert-shaped case.
+ */
+export interface EvidenceTraceContent {
+  call_chain: string[];
+  frames: TraceFrame[];
+  exception_class: string | null;
+  /** Redacted server-side — rendered runtime data, so it can carry PII. */
+  exception_message: string | null;
+}
+
 export interface EvidenceItem {
   kind: EvidenceKind;
   source: string;
   source_ref: string | null;
-  content: EvidenceLogContent | EvidenceSourceContent | Record<string, unknown>;
+  content:
+    | EvidenceLogContent
+    | EvidenceSourceContent
+    | EvidenceTraceContent
+    | Record<string, unknown>;
   relevance: number | null;
   collected_at: string;
 }

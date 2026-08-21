@@ -32,7 +32,7 @@ import ast
 import re
 from dataclasses import dataclass
 
-from haaland.domain.models import CodeLocation
+from haaland.domain.models import CodeLocation, FailureTrace, TraceFrame
 from haaland.services.code_toolbox import iter_searchable
 from haaland.services.workspace_service import Workspace
 
@@ -62,7 +62,33 @@ def extract_call_chain(log_text: str) -> list[str]:
     return chain
 
 
-def _extract_error_signature(log_text: str) -> tuple[str | None, str | None]:
+def build_failure_trace(log_text: str) -> FailureTrace:
+    """The structured form of what `extract_call_chain` returns as bare
+    names: every frame with its path and line, plus the error signature the
+    traceback terminated in.
+
+    Persisted as a `trace` evidence row by the locate_code node so the
+    dashboard can render the failure path. Deliberately derived here rather
+    than in the node: the deterministic pass already parses all of it to
+    rank candidates, so this is a second read of the same log, not a second
+    source of truth.
+    """
+    exception_class, exception_message = extract_error_signature(log_text)
+    return FailureTrace(
+        call_chain=extract_call_chain(log_text),
+        # Unlike the call chain, `<module>` frames are kept: the chain is the
+        # workflow, these are the literal traceback, and dropping frames here
+        # would silently renumber the depths the ordering depends on.
+        frames=[
+            TraceFrame(depth=depth, path=path, line=line, function=func)
+            for depth, (path, line, func) in enumerate(parse_traceback_frames(log_text))
+        ],
+        exception_class=exception_class,
+        exception_message=exception_message,
+    )
+
+
+def extract_error_signature(log_text: str) -> tuple[str | None, str | None]:
     """The last 'SomeError: message' style line, if any — a decent proxy for
     the error signature grouping docs/04 describes for the Loki adapter.
     Returns (exception_class, message); either may be None."""
@@ -267,7 +293,7 @@ class CodeSearchService:
                     confidence=0.6,
                 )
 
-        exc_class, message = _extract_error_signature(log_text)
+        exc_class, message = extract_error_signature(log_text)
         self._grep_error_template(workspace, exc_class, message, candidates)
 
         primaries = sorted(candidates.values(), key=lambda c: c.confidence, reverse=True)[:_MAX_PRIMARY]

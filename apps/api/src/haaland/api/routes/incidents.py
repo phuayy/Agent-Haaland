@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from haaland.api.deps import get_arq_pool
 from haaland.db.repositories.incidents import IncidentRepository
+from haaland.db.repositories.services import ServiceRepository
 from haaland.db.session import get_session
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
@@ -42,9 +43,19 @@ async def list_incidents(session=Depends(get_session)) -> list[dict]:
 @router.get("/{reference}")
 async def get_incident(reference: str, session=Depends(get_session)) -> dict:
     incident = await _get_or_404(reference, session)
+    # The service name is what the dashboard labels the failure path's entry
+    # point with. It is read off the registry row rather than parsed back out
+    # of `title`, whose format ("Debug session — {name}") is a display string
+    # the service layer owns and is free to change.
+    service = (
+        await ServiceRepository(session).get(incident.primary_service_id)
+        if incident.primary_service_id is not None
+        else None
+    )
     return {
         "reference": incident.reference,
         "title": incident.title,
+        "service_name": service.name if service is not None else None,
         "status": incident.status,
         "severity": incident.severity,
         "severity_confidence": incident.severity_confidence,

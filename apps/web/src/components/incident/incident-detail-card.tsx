@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, GitBranch, ScrollText, Sparkles, Wrench } from "lucide-react";
+import { AlertTriangle, GitBranch, ScrollText, Sparkles, Waypoints, Wrench } from "lucide-react";
 import { SeverityBadge } from "@/components/severity-badge";
 import { ApprovalPanel } from "@/components/incident/approval-panel";
 import { AuditTimeline } from "@/components/incident/audit-timeline";
 import { ChainIntegrityBanner } from "@/components/incident/chain-integrity-banner";
 import { EvidenceLogs } from "@/components/incident/evidence-logs";
 import { IncidentStepper } from "@/components/incident/incident-stepper";
+import { IncidentTraceGraph } from "@/components/incident/incident-trace-graph";
 import { PostmortemPanel } from "@/components/incident/postmortem-panel";
 import { RemediationDiff } from "@/components/incident/remediation-diff";
 import { useIncident } from "@/hooks/use-incident";
@@ -94,6 +95,25 @@ export function IncidentDetailCard({ reference }: { reference: string }) {
       <div className="flex-1 overflow-y-auto px-6 py-4">
         <div className="flex flex-col gap-6">
           <ChainIntegrityBanner reference={reference} />
+
+          {/* Above the root cause deliberately: the pane reads top-down as
+              where it broke -> why it broke -> what was collected -> the fix. */}
+          <Block
+            icon={<Waypoints className="h-3.5 w-3.5 text-slate-600" />}
+            title="Trace path"
+            subtitle="The request's path from entry to failure"
+          >
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <IncidentTraceGraph
+                reference={reference}
+                serviceName={incident.service_name}
+                repoFullName={incident.repo_full_name}
+                baseRef={incident.base_ref}
+                status={incident.status}
+                rootCauseSummary={incident.root_cause_summary}
+              />
+            </div>
+          </Block>
 
           <Block icon={<Sparkles className="h-3.5 w-3.5 text-violet-600" />} title="AI root cause">
             <div className="rounded-lg border border-border bg-muted/60 p-4">

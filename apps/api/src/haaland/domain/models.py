@@ -44,6 +44,47 @@ class CodeLocation(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class TraceFrame(BaseModel):
+    """One stack frame off the ingested traceback.
+
+    `depth` is the frame's index in the traceback, which is the order the
+    request actually travelled: depth 0 is the outermost entry point, the
+    highest depth is where the exception raised. It is stored explicitly
+    rather than left implicit in list position so a consumer can filter or
+    page frames without losing the ordering that makes them a path.
+    """
+
+    depth: int = Field(ge=0)
+    path: str
+    line: int = Field(ge=1)
+    function: str | None = None
+
+
+class FailureTrace(BaseModel):
+    """The request's path from entry point to raise site, parsed
+    deterministically off the log text before any model reasons about it.
+
+    The structured counterpart to `EvidenceBundle.call_chain`: the chain is
+    bare function names rendered into the diagnosis prompt, this is the full
+    frame list persisted as a `trace` evidence row so the dashboard can draw
+    the path the request took. An empty `frames` is the ordinary
+    alert-shaped case — an incident opened from a metric alert carries no
+    traceback to parse — and callers must treat it as "unknown path", never
+    as "no failure".
+    """
+
+    call_chain: list[str] = Field(default_factory=list)
+    frames: list[TraceFrame] = Field(default_factory=list)
+    exception_class: str | None = None
+    exception_message: str | None = None
+
+    @property
+    def raise_site(self) -> TraceFrame | None:
+        """The deepest frame — where the exception actually raised, as
+        opposed to the call sites that led there."""
+        return self.frames[-1] if self.frames else None
+
+
 class EvidenceItem(BaseModel):
     id: UUID | None = None
     kind: EvidenceKind

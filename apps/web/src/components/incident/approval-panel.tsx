@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { CheckCircle2, Loader2, Lock, XCircle } from "lucide-react";
+import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { READ_ONLY } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,31 +32,14 @@ function useRememberedActor() {
 }
 
 /** Pinned bottom action bar for the detail card — only rendered while the
- * incident is awaiting_approval. Solid primary "Approve", ghost red "Reject". */
+ * incident is awaiting_approval. Solid primary "Approve", ghost red "Reject".
+ *
+ * Proxy-mode builds cannot write (see lib/api/client.ts), so the panel renders
+ * nothing there rather than offering buttons whose mutation would 405. The
+ * decision is made from Lark or against /api/* directly. */
 export function ApprovalPanel({ reference }: { reference: string }) {
-  if (READ_ONLY) return <ReadOnlyApprovalNotice reference={reference} />;
+  if (READ_ONLY) return null;
   return <ApprovalActions reference={reference} />;
-}
-
-/** Proxy-mode builds cannot write (see lib/api/client.ts). Rendering the
- * buttons anyway would fail the mutation with a 405 after the reviewer has
- * typed a rejection reason, so the panel says up front where the decision has
- * to be made instead. */
-function ReadOnlyApprovalNotice({ reference }: { reference: string }) {
-  return (
-    <div className="sticky bottom-0 flex flex-col gap-1 border-t border-border bg-card/95 px-6 py-4 backdrop-blur-sm">
-      <div className="flex items-center gap-2 text-[13px] font-medium">
-        <Lock className="h-4 w-4 text-muted-foreground" />
-        Awaiting approval — this dashboard is read-only
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Approve or reject from Lark, or call the API with your own bearer token:
-      </p>
-      <code className="mt-1 block overflow-x-auto rounded bg-muted px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
-        {`POST /api/incidents/${reference}/approve  -H "Authorization: Bearer <token>"  -d '{"actor":"you@example.com"}'`}
-      </code>
-    </div>
-  );
 }
 
 function ApprovalActions({ reference }: { reference: string }) {

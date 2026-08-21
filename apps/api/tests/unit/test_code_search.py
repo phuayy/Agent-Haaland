@@ -7,7 +7,12 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from haaland.services.code_search_service import CodeSearchService, extract_call_chain
+from haaland.services.code_search_service import (
+    CodeSearchService,
+    build_failure_trace,
+    extract_call_chain,
+    extract_error_signature,
+)
 from haaland.services.workspace_service import Workspace
 
 _PRICING_SOURCE = '''"""Order pricing helpers for the seed 'orders-api' service."""
@@ -165,3 +170,60 @@ def test_extract_call_chain_orders_outermost_first():
 def test_extract_call_chain_ignores_module_frames():
     log = '  File "/app/x.py", line 1, in <module>\n  File "/app/y.py", line 2, in handler\n'
     assert extract_call_chain(log) == ["handler"]
+
+
+def test_build_failure_trace_captures_frames_in_call_order():
+    trace = build_failure_trace(_LOG_TEXT)
+
+    assert [f.depth for f in trace.frames] == [0, 1, 2]
+    assert [f.function for f in trace.frames] == [
+        "quote",
+        "apply_discount",
+        "average_item_price",
+    ]
+    assert trace.frames[0].path == "/app/app/main.py"
+    assert trace.frames[0].line == 11
+    assert trace.call_chain == ["quote", "apply_discount", "average_item_price"]
+
+
+def test_build_failure_trace_raise_site_is_the_deepest_frame():
+    trace = build_failure_trace(_LOG_TEXT)
+
+    raise_site = trace.raise_site
+    assert raise_site is not None
+    assert (raise_site.path, raise_site.line, raise_site.function) == (
+        "/app/app/pricing.py",
+        8,
+        "average_item_price",
+    )
+
+
+def test_build_failure_trace_carries_the_terminating_error_signature():
+    trace = build_failure_trace(_LOG_TEXT)
+
+    assert trace.exception_class == "ZeroDivisionError"
+    assert trace.exception_message == "division by zero"
+
+
+def test_build_failure_trace_keeps_module_frames_the_call_chain_drops():
+    """The chain is the workflow, the frames are the literal traceback:
+    dropping <module> from the frames would renumber the depths that make
+    them a path."""
+    log = '  File "/app/x.py", line 1, in <module>\n  File "/app/y.py", line 2, in handler\n'
+    trace = build_failure_trace(log)
+
+    assert [f.function for f in trace.frames] == ["<module>", "handler"]
+    assert trace.call_chain == ["handler"]
+
+
+def test_build_failure_trace_is_empty_for_a_log_with_no_traceback():
+    trace = build_failure_trace("WARN orders-api p99 latency above SLO for 5m\n")
+
+    assert trace.frames == []
+    assert trace.call_chain == []
+    assert trace.raise_site is None
+    assert trace.exception_class is None
+
+
+def test_extract_error_signature_returns_none_when_no_error_line():
+    assert extract_error_signature("INFO all good\n") == (None, None)

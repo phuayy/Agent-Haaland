@@ -237,12 +237,13 @@ Full detail for one incident. **This is your polling endpoint.**
 | **Auth** | `Authorization: Bearer <token>` |
 | **Path param** | `reference` — `string`, e.g. `INC-2026-0001` |
 
-**`200 OK`** — the list shape plus three fields:
+**`200 OK`** — the list shape plus four fields:
 
 | Field | Type | Notes |
 |---|---|---|
 | `reference` | `string` | |
 | `title` | `string` | |
+| `service_name` | `string \| null` | Registry name of the service the incident was opened against, read from the `services` row via `primary_service_id`. `null` only if that row was deleted. Do **not** parse it out of `title` — that string's format belongs to the service layer. |
 | `status` | `string` | `IncidentStatus` |
 | `severity` | `string \| null` | |
 | `severity_confidence` | `number \| null` | Float `0.0`–`1.0`, from the classifier |
@@ -584,15 +585,35 @@ Read-only mirror of the `evidence` table — what the agent actually collected b
 |---|---|---|
 | `kind` | `string` | `log` · `trace` · `metric` · `deploy` · `config` · `runbook` · `source` |
 | `source` | `string` | e.g. `user_upload`, `workspace` |
-| `source_ref` | `string \| null` | For `kind: "source"`, a `path:start_line-end_line` reference into the target repo |
+| `source_ref` | `string \| null` | For `kind: "source"`, a `path:start_line-end_line` reference into the target repo. For `kind: "trace"`, the raise site as `path:line` |
 | `content` | `object` | Shape varies by `kind` — see below |
 | `relevance` | `number \| null` | `0.0`–`1.0` |
 | `collected_at` | `string` | ISO 8601 + offset |
 
-**What's actually in `content` today** — checked against the two node implementations that write these rows, since the shape isn't obvious from the column type (`JSONB`, no schema):
+**What's actually in `content` today** — checked against the node implementations that write these rows, since the shape isn't obvious from the column type (`JSONB`, no schema):
 
 - `kind: "log"` — `{"line_count": 47}`. **The raw log text is not here and is not retrievable from any endpoint.** It lives only in the transient LangGraph checkpoint state, never persisted to a queryable table. This row is a count, not a viewer.
 - `kind: "source"` — `{"reason": "traceback_frame", "confidence": 0.9}`. `reason` is one of `traceback_frame` / `function_name_grep` / `error_signature_grep` / `symbol_reference (...)`. Combine with `source_ref` and the incident's `repo_full_name` + `base_ref` (from `GET /api/incidents/{reference}`) to build a GitHub link: `https://github.com/{repo_full_name}/blob/{base_ref}/{path}#L{start}-L{end}`.
+
+- `kind: "trace"` — the failure path, written once by the `locate_code` node when the ingested log yielded a traceback or an error signature. **The row is absent entirely otherwise** (alert-shaped incidents), and its absence is the signal that no observed path exists — not an empty `frames` array.
+
+```json
+{
+  "call_chain": ["quote", "apply_discount", "average_item_price"],
+  "frames": [
+    { "depth": 0, "path": "/app/app/main.py", "line": 11, "function": "quote" },
+    { "depth": 1, "path": "/app/app/pricing.py", "line": 12, "function": "apply_discount" },
+    { "depth": 2, "path": "/app/app/pricing.py", "line": 8, "function": "average_item_price" }
+  ],
+  "exception_class": "ZeroDivisionError",
+  "exception_message": "division by zero"
+}
+```
+
+  - `depth` is the frame's index in the traceback, which is the order the request travelled: `0` is the outermost entry point, the highest depth is the raise site.
+  - `call_chain` is the same path as bare function names with `<module>` frames dropped; `frames` keeps them, so the two lists are not index-aligned.
+  - `frames[].path` is the path **as the runtime saw it** — a container absolute like `/app/app/pricing.py`, not a repository path. It is not linkable on its own: match it against a `kind: "source"` row's `source_ref` by trailing path segments, and link only what resolves.
+  - `exception_message` is redacted before it is stored (it is rendered runtime data and can carry PII); `exception_class` and the frame paths are not.
 
 ```json
 [
@@ -866,7 +887,7 @@ Branches off that spine: `triaged_low` (auto-closed, low severity), `escalated` 
 | `useIncident(ref)` | `GET /api/incidents/{ref}` | Poll while status isn't terminal; stop when `closed`/`failed`/`escalated`/`triaged_low` |
 | `useAuditTimeline(ref)` | `GET /api/incidents/{ref}/audit` | Append-only — diff on `seq` |
 | `useChainVerification(ref)` | `GET /api/incidents/{ref}/audit/verify` | On demand only |
-| `useEvidence(ref)` | `GET /api/incidents/{ref}/evidence` | Candidate-locations list, not a log viewer — see the Evidence section |
+| `useEvidence(ref)` | `GET /api/incidents/{ref}/evidence` | Candidate-locations list **and** the `trace` row the failure-path graph is built from, not a log viewer — see the Evidence section |
 | `useRemediation(ref)` | `GET /api/incidents/{ref}/remediation` | Fetch before rendering the approve/reject panel — it's the diff |
 | `usePostmortem(ref)` | `GET /api/incidents/{ref}/postmortem` | Treat `postmortem not yet generated` as empty |
 | `useCreateDebugSession()` | `POST /api/debug-sessions` | Returns `reference` — navigate to it |
