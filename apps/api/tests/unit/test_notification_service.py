@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import structlog
+
 from haaland.domain.models import NotificationMessage
 from haaland.integrations.base import NotificationError
 from haaland.services.notification_service import NotificationService
@@ -37,3 +39,20 @@ async def test_one_failing_channel_does_not_stop_the_others():
 
 async def test_no_channels_configured_is_a_quiet_noop():
     assert await NotificationService([]).broadcast(_message()) == []
+
+
+async def test_total_delivery_failure_is_logged_loudly():
+    """The delivery rows are only visible to someone already looking at the
+    incident — and the point of these cards is that nobody is looking yet."""
+    with structlog.testing.capture_logs() as logs:
+        await NotificationService([DownNotifier()]).broadcast(_message())
+
+    assert [entry for entry in logs if entry["log_level"] == "error"]
+
+
+async def test_partial_delivery_is_not_an_error():
+    with structlog.testing.capture_logs() as logs:
+        await NotificationService([DownNotifier(), OkNotifier()]).broadcast(_message())
+
+    assert not [entry for entry in logs if entry["log_level"] == "error"]
+    assert [entry for entry in logs if entry["log_level"] == "warning"]

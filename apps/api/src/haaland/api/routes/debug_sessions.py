@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from haaland.api.deps import get_arq_pool
+from haaland.api.deps import get_arq_pool, get_deps
 from haaland.api.ingest import launch_debug_session
 from haaland.api.schemas.debug_sessions import DebugSessionAccepted, DebugSessionCreate
 
@@ -19,10 +19,10 @@ router = APIRouter(prefix="/api/debug-sessions", tags=["debug-sessions"])
 
 @router.post("", status_code=202, response_model=DebugSessionAccepted)
 async def create_debug_session(
-    body: DebugSessionCreate, arq_pool=Depends(get_arq_pool)
+    body: DebugSessionCreate, arq_pool=Depends(get_arq_pool), deps=Depends(get_deps)
 ) -> DebugSessionAccepted:
     try:
-        reference, incident_id = await launch_debug_session(body, arq_pool)
+        reference, incident_id = await launch_debug_session(body, arq_pool, deps=deps)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

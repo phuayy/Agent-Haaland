@@ -47,11 +47,7 @@ def _usage(prompt_hit: int = 0, prompt_miss: int = 0, completion: int = 0) -> Si
 
 def _response(content: str, *, finish_reason: str = "stop", usage=None) -> SimpleNamespace:
     return SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(content=content), finish_reason=finish_reason
-            )
-        ],
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content), finish_reason=finish_reason)],
         usage=usage if usage is not None else _usage(prompt_miss=100, completion=50),
     )
 
@@ -68,8 +64,10 @@ class ScriptedCompletions:
         return self._responses.pop(0)
 
 
-def _provider(responses: list[SimpleNamespace]) -> tuple[DeepSeekProvider, ScriptedCompletions]:
-    provider = DeepSeekProvider("test-key")
+def _provider(
+    responses: list[SimpleNamespace], *, thinking: bool = True
+) -> tuple[DeepSeekProvider, ScriptedCompletions]:
+    provider = DeepSeekProvider("test-key", thinking=thinking)
     completions = ScriptedCompletions(responses)
     provider._client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     return provider, completions
@@ -144,6 +142,11 @@ async def test_off_schema_response_triggers_one_repair_turn() -> None:
     repair_messages = completions.calls[1]["messages"]
     assert repair_messages[-1]["role"] == "user"
     assert "did not validate" in repair_messages[-1]["content"]
+    # The rejected reply is quoted back so the model can see what it got wrong…
+    assert '{"severity": "P1"}' in repair_messages[-1]["content"]
+    # …inside the user turn, never as an assistant echo: thinking mode rejects
+    # an assistant message that carries no reasoning_content.
+    assert [m["role"] for m in repair_messages] == ["system", "user"]
     # Both attempts are billed.
     assert result.usage.output_tokens == 100
 
@@ -213,17 +216,13 @@ async def test_long_max_tokens_streams() -> None:
         yield SimpleNamespace(
             usage=None,
             choices=[
-                SimpleNamespace(
-                    delta=SimpleNamespace(content='{"severity": "P3",'), finish_reason=None
-                )
+                SimpleNamespace(delta=SimpleNamespace(content='{"severity": "P3",'), finish_reason=None)
             ],
         )
         yield SimpleNamespace(
             usage=None,
             choices=[
-                SimpleNamespace(
-                    delta=SimpleNamespace(content=' "confidence": 0.1}'), finish_reason="stop"
-                )
+                SimpleNamespace(delta=SimpleNamespace(content=' "confidence": 0.1}'), finish_reason="stop")
             ],
         )
         yield SimpleNamespace(usage=_usage(prompt_miss=10, completion=20), choices=[])
@@ -244,9 +243,7 @@ def test_usage_splits_cache_hits_and_prices_them_apart() -> None:
 
     # input_tokens means "uncached input" on every provider, so ai_analyses rows
     # stay comparable.
-    assert usage == Usage(
-        input_tokens=100, output_tokens=200, cache_read_tokens=900, cache_write_tokens=0
-    )
+    assert usage == Usage(input_tokens=100, output_tokens=200, cache_read_tokens=900, cache_write_tokens=0)
 
     off_peak = _cost_usd("deepseek-v4-flash", usage, peak=False)
     peak = _cost_usd("deepseek-v4-flash", usage, peak=True)
@@ -336,9 +333,7 @@ async def test_explore_parses_tool_calls_and_disables_thinking_and_json_mode() -
 async def test_explore_appends_turn_note_as_trailing_user_message() -> None:
     provider, completions = _provider([_tool_response(content="ok")])
 
-    await provider.explore(
-        _loop_request(turn_note="[loop status] exploration turns remaining: 3.")
-    )
+    await provider.explore(_loop_request(turn_note="[loop status] exploration turns remaining: 3."))
 
     sent = completions.calls[0]
     assert sent["messages"][-1] == {
@@ -347,33 +342,122 @@ async def test_explore_appends_turn_note_as_trailing_user_message() -> None:
     }
 
 
-async def test_conclude_replays_transcript_with_schema_block_and_tools_off() -> None:
-    provider, completions = _provider([_response('{"severity": "P1", "confidence": 0.9}')])
-    transcript = [
+def _explored(*, raw=None) -> list[ToolExchange]:
+    return [
         ToolExchange(
             turn=AssistantTurn(
                 text="looking",
                 tool_calls=(ToolCall(id="call_1", name="grep", arguments={"pattern": "len"}),),
+                raw=raw,
             ),
             outcomes=(
-                ToolOutcome(
-                    call_id="call_1", name="grep", content=RedactedPayload("app/pricing.py:6: hit")
-                ),
+                ToolOutcome(call_id="call_1", name="grep", content=RedactedPayload("app/pricing.py:6: hit")),
             ),
         )
     ]
 
-    result = await provider.conclude(_loop_request(transcript))
+
+async def test_conclude_keeps_thinking_on_by_folding_the_transcript_into_the_user_turn() -> None:
+    """The regression the 400 came from: exploration turns run without thinking,
+    so their assistant messages carry no reasoning_content and cannot be replayed
+    into the thinking-mode conclude call ("The `reasoning_content` in the thinking
+    mode must be passed back to the API"). The evidence goes into the user turn
+    instead, and thinking stays on for the turn that produces the diagnosis."""
+    provider, completions = _provider([_response('{"severity": "P1", "confidence": 0.9}')])
+
+    result = await provider.conclude(_loop_request(_explored()))
 
     assert result.parsed == Answer(severity="P1", confidence=0.9)
     sent = completions.calls[0]
+    assert sent["extra_body"] == {"thinking": {"type": "enabled"}}
     assert sent["response_format"] == {"type": "json_object"}
-    assert sent["tool_choice"] == "none"
     assert "JSON Schema" in sent["messages"][0]["content"]
-    roles = [m["role"] for m in sent["messages"]]
-    assert roles == ["system", "user", "assistant", "tool"]
+    # No assistant message anywhere — the only shape valid in thinking mode.
+    assert [m["role"] for m in sent["messages"]] == ["system", "user"]
+    user = sent["messages"][1]["content"]
+    assert "[REDACTED] log line" in user
+    assert "looking" in user
+    assert '`grep({"pattern": "len"})`' in user
+    assert "app/pricing.py:6: hit" in user
+    # Nothing left for the API to resolve, so no tool plumbing is sent either.
+    assert "tools" not in sent and "tool_choice" not in sent
+
+
+async def test_conclude_replays_natively_when_every_turn_carries_its_reasoning() -> None:
+    """The other half of the rule: a transcript whose assistant turns *do* carry
+    reasoning_content is replayable as-is, so the wire format the API produced is
+    kept — including the reasoning it demands back."""
+    raw = {
+        "role": "assistant",
+        "content": "looking",
+        "reasoning_content": "the pool size is the suspect",
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "grep", "arguments": '{"pattern": "len"}'},
+            }
+        ],
+    }
+    provider, completions = _provider([_response('{"severity": "P1", "confidence": 0.9}')])
+
+    result = await provider.conclude(_loop_request(_explored(raw=raw)))
+
+    assert result.parsed == Answer(severity="P1", confidence=0.9)
+    sent = completions.calls[0]
+    assert sent["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert sent["tool_choice"] == "none"
+    assert [m["role"] for m in sent["messages"]] == ["system", "user", "assistant", "tool"]
+    assert sent["messages"][2]["reasoning_content"] == "the pool size is the suspect"
     assert sent["messages"][3] == {
         "role": "tool",
         "tool_call_id": "call_1",
         "content": "app/pricing.py:6: hit",
     }
+
+
+async def test_conclude_replays_natively_when_thinking_is_off() -> None:
+    provider, completions = _provider([_response('{"severity": "P1", "confidence": 0.9}')], thinking=False)
+
+    await provider.conclude(_loop_request(_explored()))
+
+    sent = completions.calls[0]
+    assert "extra_body" not in sent
+    assert [m["role"] for m in sent["messages"]] == ["system", "user", "assistant", "tool"]
+
+
+async def test_explore_drops_reasoning_from_replayed_turns() -> None:
+    """Exploration runs without thinking, and a non-thinking request rejects
+    reasoning_content — so the same stored turn is rendered without it here."""
+    raw = {"role": "assistant", "content": "looking", "reasoning_content": "a thought"}
+    provider, completions = _provider([_tool_response(content="still looking")])
+
+    await provider.explore(_loop_request([ToolExchange(turn=AssistantTurn(text="looking", raw=raw))]))
+
+    replayed = completions.calls[0]["messages"][2]
+    assert replayed == {"role": "assistant", "content": "looking"}
+
+
+async def test_explore_keeps_reasoning_on_the_stored_turn() -> None:
+    """Stripping at capture time (rather than at render time) would make a
+    thinking-mode replay impossible after the fact."""
+
+    class _Message:
+        content = "looking"
+        tool_calls = None
+
+        def model_dump(self, exclude_none: bool = False) -> dict:
+            return {"role": "assistant", "content": "looking", "reasoning_content": "a thought"}
+
+    provider, _ = _provider(
+        [
+            SimpleNamespace(
+                choices=[SimpleNamespace(message=_Message(), finish_reason="stop")],
+                usage=_usage(prompt_miss=10, completion=5),
+            )
+        ]
+    )
+
+    turn = await provider.explore(_loop_request())
+
+    assert turn.turn.raw["reasoning_content"] == "a thought"

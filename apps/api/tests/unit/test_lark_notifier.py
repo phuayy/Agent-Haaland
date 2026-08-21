@@ -46,6 +46,30 @@ def test_card_reflects_severity_and_links():
     assert buttons[0]["url"] == "https://github.com/acme/x/pull/1"
 
 
+@pytest.mark.parametrize(
+    ("severity", "template"), [("P1", "red"), ("P2", "orange"), ("P3", "yellow"), ("P4", "grey")]
+)
+def test_every_severity_band_renders_a_card(severity, template):
+    """P3/P4 are notified too, not just the paging bands — the low path
+    files a ticket and still posts a card (agent/nodes/file_ticket.py)."""
+    card = build_card(_message(kind="triaged_low", severity=severity))
+    assert card["header"]["template"] == template
+    assert f"**Severity:** {severity}" in card["elements"][0]["content"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "severity", "template"),
+    [("incident_closed", "P1", "green"), ("escalated", "P4", "red")],
+)
+def test_terminal_outcome_colour_beats_the_severity_band(kind, severity, template):
+    """A resolved P1 is not an emergency and a run that died on a P4 is not
+    routine — once an incident is over, the outcome is what the channel
+    sorts on. The band is still spelled out in the facts line."""
+    card = build_card(_message(kind=kind, severity=severity))
+    assert card["header"]["template"] == template
+    assert f"**Severity:** {severity}" in card["elements"][0]["content"]
+
+
 def test_card_falls_back_to_kind_colour_without_severity():
     card = build_card(_message(severity=None, kind="incident_closed"))
     assert card["header"]["template"] == "green"

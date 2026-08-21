@@ -41,10 +41,44 @@ mode). So the envelope:
 
 ## Thinking and effort
 
-Thinking is opt-in per request: `extra_body={"thinking": {"type": "enabled"}}`.
-`reasoning_effort` is `low | high | max` (default `high`) — note there is no
-`medium`, so the provider-neutral `LLMRequest.effort` is mapped
-`low -> low`, `medium -> high`, `high -> max` in `_EFFORT_MAP`.
+Thinking is opt-in per request: `extra_body={"thinking": {"type": "enabled"}}`,
+on by default for the structured (deliverable) calls and switchable with
+`HAALAND_DEEPSEEK_THINKING`. `reasoning_effort` is `low | high | max` (default
+`high`) — note there is no `medium`, so the provider-neutral `LLMRequest.effort`
+is mapped `low -> low`, `medium -> high`, `high -> max` in `_EFFORT_MAP`.
+
+Thinking mode is **stateful across turns**, which constrains message shape:
+
+| | assistant message with `reasoning_content` | assistant message without |
+|---|---|---|
+| thinking on | accepted | **400** `The 'reasoning_content' in the thinking mode must be passed back to the API.` |
+| thinking off | **400** | accepted |
+
+Exploration turns run with thinking *off* (function calling and thinking are
+mutually exclusive here), so their assistant messages have no reasoning to hand
+back. Rather than downgrade the turn that actually produces the diagnosis, every
+request that would need such a replay is built with **no assistant message at
+all**:
+
+- **conclude** — the exploration transcript is folded into the user turn as an
+  evidence digest (`render_transcript_digest`): same thoughts, tool calls and
+  redacted tool output, `tools`/`tool_choice` omitted because there are no
+  `tool_calls` left for the API to resolve. Should a transcript ever arrive with
+  reasoning on every turn, `transcript_is_thinking_replayable` picks the native
+  assistant/tool replay again and passes the reasoning back untouched.
+- **repair** — the rejected reply is quoted inside the trailing user message
+  instead of being echoed as an assistant turn.
+
+`AssistantTurn.raw` keeps `reasoning_content` when the model returns one;
+`_replay_assistant` strips it per-request, so the same stored turn is legal in
+either mode.
+
+Budget consequence: reasoning tokens are billed as output **and** count against
+`max_tokens`, which is why the tool loop concludes at `_CONCLUDE_MAX_TOKENS =
+24000` (and why `finish_reason="length"` retries by doubling the ceiling rather
+than repeating the call). Anything at or above `_STREAM_ABOVE_MAX_TOKENS = 8000`
+streams, so a long reasoning pass cannot trip an idle-timeout reset; the arq
+ceiling for the whole job is `HAALAND_ARQ_JOB_TIMEOUT_SECONDS` (default 1800s).
 
 ## Caching and cost
 

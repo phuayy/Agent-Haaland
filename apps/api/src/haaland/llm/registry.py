@@ -24,6 +24,7 @@ def build_provider(settings: Settings) -> LLMProvider:
             settings.deepseek_api_key,
             default_model=settings.model_primary,
             base_url=settings.deepseek_base_url,
+            thinking=settings.deepseek_thinking,
         )
 
     if settings.llm_provider == "anthropic":

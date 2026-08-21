@@ -19,16 +19,27 @@ _HEADER_TEMPLATE_BY_KIND = {
     "approval_requested": "orange",
     "incident_closed": "green",
     "escalated": "red",
+    "triaged_low": "grey",
     "test": "blue",
 }
+# Terminal-outcome cards take their colour from the outcome, not from the
+# severity band: a resolved P1 is green and a run that died on a P4 is red,
+# because by then the outcome is what the channel needs to sort on. In-flight
+# cards keep the severity colour so urgency is what stands out while the
+# incident is still moving. The band is always spelled out in the facts line
+# either way, so nothing is lost by not colouring it.
+_OUTCOME_KINDS = frozenset({"incident_closed", "escalated"})
 
 
 def build_card(message: NotificationMessage) -> dict:
-    template = (
-        _HEADER_TEMPLATE_BY_SEVERITY.get(message.severity.value)
-        if message.severity
-        else None
-    ) or _HEADER_TEMPLATE_BY_KIND.get(message.kind, "blue")
+    if message.kind in _OUTCOME_KINDS:
+        template = _HEADER_TEMPLATE_BY_KIND[message.kind]
+    else:
+        template = (
+            _HEADER_TEMPLATE_BY_SEVERITY.get(message.severity.value)
+            if message.severity
+            else None
+        ) or _HEADER_TEMPLATE_BY_KIND.get(message.kind, "blue")
 
     elements: list[dict] = [
         {"tag": "markdown", "content": message.body_markdown},

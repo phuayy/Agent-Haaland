@@ -17,7 +17,18 @@ block and the response is validated with Pydantic here, with one repair retry
 when the model returns JSON that does not fit the schema.
 
 Other DeepSeek-specific rules encoded here:
-- Thinking is opt-in per request: `extra_body={"thinking": {"type": "enabled"}}`.
+- Thinking is opt-in per request: `extra_body={"thinking": {"type": "enabled"}}`,
+  and it is *stateful*: a thinking-mode request must carry the
+  `reasoning_content` of every assistant message it replays, while a
+  non-thinking request rejects that same field. Exploration turns run with
+  thinking off (function calling is incompatible with it), so their assistant
+  messages have no reasoning to replay. Rather than switch thinking off for
+  the stage's actual deliverable, requests that would need such a replay are
+  built without any assistant message at all — the conclude turn folds the
+  exploration transcript into the user turn (`_REPLAY_DIGEST`) and the repair
+  turn quotes the rejected output inside the trailing user message. That shape
+  is valid in both modes; the assistant/tool wire format is still used
+  (`_REPLAY_NATIVE`) wherever it is legal.
 - `reasoning_effort` accepts "low" | "high" | "max" — not "medium"; the
   provider-neutral effort levels on LLMRequest are mapped in _EFFORT_MAP.
 - Usage splits input into `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`.
@@ -35,13 +46,20 @@ from __future__ import annotations
 import json
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final, Literal
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 
 from haaland.llm.base import LLMRequest, LLMResult, Usage
-from haaland.llm.tools import AssistantTurn, ToolCall, ToolLoopRequest, ToolSpec, ToolTurnResult
+from haaland.llm.tools import (
+    AssistantTurn,
+    ToolCall,
+    ToolExchange,
+    ToolLoopRequest,
+    ToolSpec,
+    ToolTurnResult,
+)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
@@ -69,6 +87,24 @@ _STREAM_ABOVE_MAX_TOKENS = 8000
 # On finish_reason="length" the retry raises the ceiling (doubling, capped
 # here) instead of repeating the same truncation with the same budget.
 _MAX_RETRY_MAX_TOKENS = 65536
+
+# How the exploration transcript re-enters the conclude request. `native` is
+# the wire format the API produced (assistant + tool messages); `digest` is the
+# same content folded into the user turn, for requests where replaying an
+# assistant message is not legal — see the module docstring.
+_REPLAY_NATIVE: Final = "native"
+_REPLAY_DIGEST: Final = "digest"
+
+_DIGEST_HEADER = (
+    "## Exploration already performed\n"
+    "These are your own earlier read-only tool calls over the workspace clone "
+    "and their output. They are the evidence for your conclusion; no further "
+    "tool calls are possible."
+)
+# The rejected output is echoed back on a repair turn so the model can see what
+# it got wrong. Capped: a truncated or runaway reply would otherwise double the
+# prompt that is meant to correct it.
+_REPAIR_ECHO_CHARS = 4000
 
 _SCHEMA_BLOCK = (
     "## Output format\n"
@@ -117,6 +153,80 @@ def extract_json(text: str) -> str:
 def parse_payload(text: str, output_schema: type[BaseModel]) -> BaseModel:
     """Raises ValidationError / ValueError for the repair path to catch."""
     return output_schema.model_validate_json(extract_json(text))
+
+
+def _reasoning_of(turn: AssistantTurn) -> str | None:
+    """The `reasoning_content` DeepSeek returned for one assistant turn, if that
+    turn ran in thinking mode. `AssistantTurn.raw` is this provider's own
+    payload (the dumped assistant message), so reading it here is not a
+    cross-provider assumption."""
+    raw = turn.raw
+    if isinstance(raw, dict):
+        reasoning = raw.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            return reasoning
+    return None
+
+
+def transcript_is_thinking_replayable(transcript: list[ToolExchange]) -> bool:
+    """True when every assistant turn can be replayed into a thinking-mode
+    request — i.e. each one carries its own reasoning back. An empty transcript
+    qualifies: there is nothing to replay."""
+    return all(_reasoning_of(exchange.turn) is not None for exchange in transcript)
+
+
+def render_transcript_digest(transcript: list[ToolExchange]) -> str:
+    """The exploration transcript as evidence text for the user turn.
+
+    Carries what the native replay would carry — every thought, tool call and
+    (already redacted) tool result — in a request that contains no assistant
+    message, which is what lets the conclude turn keep thinking enabled."""
+    parts: list[str] = [_DIGEST_HEADER]
+    for turn_no, exchange in enumerate(transcript, start=1):
+        parts.append(f"### Exploration turn {turn_no}")
+        if exchange.turn.text.strip():
+            parts.append(exchange.turn.text.strip())
+        pending = {outcome.call_id: outcome for outcome in exchange.outcomes}
+        for call in exchange.turn.tool_calls:
+            parts.append(f"`{call.name}({json.dumps(call.arguments, sort_keys=True)})`")
+            outcome = pending.pop(call.id, None)
+            if outcome is None:
+                parts.append("(not executed)")
+                continue
+            label = "error" if outcome.is_error else "result"
+            parts.append(f"{label}:\n```\n{outcome.content.text}\n```")
+        for orphan in pending.values():
+            parts.append(f"`{orphan.name}` result:\n```\n{orphan.content.text}\n```")
+    return "\n\n".join(parts)
+
+
+def _with_repair_note(
+    messages: list[dict[str, Any]], previous: str, error_detail: str
+) -> list[dict[str, Any]]:
+    """The repair turn, as a user-side message.
+
+    The obvious shape — an assistant echo of the rejected reply plus a user
+    correction — is itself rejected in thinking mode, because that echo carries
+    no `reasoning_content`. Quoting the reply inside the user turn instead keeps
+    the repair request the same shape as the attempt it is repairing."""
+    echo = previous[:_REPAIR_ECHO_CHARS]
+    if len(previous) > _REPAIR_ECHO_CHARS:
+        echo += "\n... (truncated)"
+    note = (
+        "## Previous attempt (rejected)\n"
+        f"You replied:\n\n{echo}\n\n"
+        "That did not validate against the required schema:\n"
+        f"{error_detail}\n\nReturn the corrected json object only."
+    )
+    repaired = [dict(message) for message in messages]
+    last = repaired[-1] if repaired else None
+    # Extend the trailing user turn when there is one: a second consecutive user
+    # message is not a shape the API guarantees to accept.
+    if last is not None and last.get("role") == "user" and isinstance(last.get("content"), str):
+        last["content"] = f"{last['content']}\n\n{note}"
+    else:
+        repaired.append({"role": "user", "content": note})
+    return repaired
 
 
 class DeepSeekProvider:
@@ -262,17 +372,7 @@ class DeepSeekProvider:
                 error_detail = str(exc)[:2000]
                 if attempt == self._repair_attempts:
                     break
-                messages = [
-                    *messages,
-                    {"role": "assistant", "content": text},
-                    {
-                        "role": "user",
-                        "content": (
-                            "That response did not validate against the required schema:\n"
-                            f"{error_detail}\n\nReturn the corrected json object only."
-                        ),
-                    },
-                ]
+                messages = _with_repair_note(messages, text, error_detail)
 
         if finish_reason == "content_filter":
             stop_reason = "refusal"
@@ -308,23 +408,53 @@ class DeepSeekProvider:
             for t in tools
         ]
 
+    @staticmethod
+    def _replay_assistant(raw: dict[str, Any], *, thinking: bool) -> dict[str, Any]:
+        """One stored assistant message, rendered for the mode of the request it
+        is going into: thinking mode requires `reasoning_content` back, a
+        non-thinking request rejects it. The stored turn keeps it either way, so
+        a later thinking-mode replay stays possible."""
+        message = dict(raw)
+        if not thinking:
+            message.pop("reasoning_content", None)
+        return message
+
     def _loop_messages(
-        self, request: ToolLoopRequest, *, include_schema_block: bool
+        self,
+        request: ToolLoopRequest,
+        *,
+        include_schema_block: bool,
+        thinking: bool,
+        replay: Literal["native", "digest"] = _REPLAY_NATIVE,
     ) -> list[dict[str, Any]]:
         """The schema block is appended only on the conclude turn — during
         exploration the model must feel free to emit tool calls and prose,
-        not a premature json object."""
+        not a premature json object.
+
+        `replay` picks how the transcript re-enters the request (see the module
+        docstring); `thinking` is the mode of the request being built and decides
+        whether replayed assistant messages keep their reasoning."""
         blocks = list(request.system_blocks)
         if include_schema_block:
             blocks.append(schema_block(request.output_schema))
+
+        user_parts = [request.user_content.text]
+        if replay == _REPLAY_DIGEST:
+            if request.transcript:
+                user_parts.append(render_transcript_digest(request.transcript))
+            if request.turn_note:
+                user_parts.append(request.turn_note)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": "\n\n".join(blocks)},
-            {"role": "user", "content": request.user_content.text},
+            {"role": "user", "content": "\n\n".join(user_parts)},
         ]
+        if replay == _REPLAY_DIGEST:
+            return messages
+
         for exchange in request.transcript:
             turn = exchange.turn
             if turn.raw is not None:
-                messages.append(turn.raw)
+                messages.append(self._replay_assistant(turn.raw, thinking=thinking))
             else:
                 msg: dict[str, Any] = {"role": "assistant", "content": turn.text or None}
                 if turn.tool_calls:
@@ -354,7 +484,7 @@ class DeepSeekProvider:
         # conclude turn has no tool calls to make and re-enables it.
         resp = await self._client.chat.completions.create(
             model=model,
-            messages=self._loop_messages(request, include_schema_block=False),
+            messages=self._loop_messages(request, include_schema_block=False, thinking=False),
             max_tokens=request.max_tokens,
             tools=self._tool_defs(request.tools),
             reasoning_effort=_EFFORT_MAP.get(request.effort, "high"),
@@ -380,9 +510,10 @@ class DeepSeekProvider:
             stop_reason = choice.finish_reason or "stop"
 
         usage = self._usage(resp.usage)
+        # Stored verbatim, `reasoning_content` included when the model returned
+        # one — _replay_assistant drops it per request mode. Discarding it here
+        # instead would make a thinking-mode replay impossible after the fact.
         raw_message = message.model_dump(exclude_none=True)
-        # DeepSeek rejects requests whose history contains reasoning_content.
-        raw_message.pop("reasoning_content", None)
         turn = AssistantTurn(text=message.content or "", tool_calls=tuple(calls), raw=raw_message)
         return ToolTurnResult(
             turn=turn,
@@ -399,12 +530,28 @@ class DeepSeekProvider:
         )
 
     async def conclude(self, request: ToolLoopRequest) -> LLMResult:
+        """Thinking stays enabled here — this turn is the stage deliverable and
+        the reasoning is what it is worth. Exploration turns ran without it, so
+        their assistant messages cannot go into a thinking-mode request ("The
+        `reasoning_content` in the thinking mode must be passed back to the API",
+        HTTP 400); the transcript enters as a user-turn digest instead. When the
+        transcript does carry reasoning, the native replay is used unchanged."""
         model = request.model or self._default_model
-        # tools + tool_choice="none" (rather than omitting tools) so the API
-        # can resolve the tool_calls already present in the replayed history.
+        native = not self._thinking or transcript_is_thinking_replayable(request.transcript)
         extra: dict[str, Any] = {}
-        if request.transcript:
+        if native and request.transcript:
+            # tools + tool_choice="none" (rather than omitting tools) so the API
+            # can resolve the tool_calls already present in the replayed history.
+            # A digest carries no tool_calls, so it needs neither.
             extra = {"tools": self._tool_defs(request.tools), "tool_choice": "none"}
         return await self._run_structured(
-            model, request, self._loop_messages(request, include_schema_block=True), extra
+            model,
+            request,
+            self._loop_messages(
+                request,
+                include_schema_block=True,
+                thinking=self._thinking,
+                replay=_REPLAY_NATIVE if native else _REPLAY_DIGEST,
+            ),
+            extra,
         )

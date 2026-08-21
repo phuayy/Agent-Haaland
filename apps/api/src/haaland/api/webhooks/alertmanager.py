@@ -155,7 +155,7 @@ async def alertmanager_webhook(
     )
 
     try:
-        reference, incident_id = await launch_debug_session(session_request, arq_pool)
+        reference, incident_id = await launch_debug_session(session_request, arq_pool, deps=deps)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

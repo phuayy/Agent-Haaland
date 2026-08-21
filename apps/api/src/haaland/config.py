@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # gateway; the Anthropic-compatible surface (/anthropic) is NOT usable here
     # — see llm/providers/deepseek.py for why.
     deepseek_base_url: str = "https://api.deepseek.com"
+    # Thinking mode on the structured (deliverable) DeepSeek calls —
+    # `extra_body={"thinking": {"type": "enabled"}}`. On by default: root-cause
+    # quality is what this pipeline is judged on and it comes from the reasoning
+    # pass. Exploration turns are unaffected — function calling and thinking are
+    # mutually exclusive on DeepSeek, see llm/providers/deepseek.py.
+    deepseek_thinking: bool = True
     model_primary: str = "deepseek-v4-flash"
     model_cheap: str = "deepseek-v4-flash"
     model_report: str = "deepseek-v4-pro"

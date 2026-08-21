@@ -62,7 +62,7 @@ def client_factory(monkeypatch):
     def _build(pool: FakeArqPool):
         launched: list = []
 
-        async def fake_launch(request, arq_pool):
+        async def fake_launch(request, arq_pool, *, deps=None):
             launched.append(request)
             await arq_pool.enqueue_job("run_debug_session", request.repo_url)
             return "INC-2026-0001", "11111111-1111-1111-1111-111111111111"

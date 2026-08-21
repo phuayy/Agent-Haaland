@@ -9,6 +9,9 @@ from dataclasses import dataclass
 
 from haaland.domain.models import NotificationMessage
 from haaland.integrations.base import NotificationError, Notifier
+from haaland.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -34,5 +37,30 @@ class NotificationService:
                 ref = await notifier.send(message)
                 results.append(DeliveryResult(notifier.name, "sent", ref))
             except NotificationError as exc:
+                logger.warning(
+                    "notification channel failed",
+                    channel=notifier.name,
+                    kind=message.kind,
+                    incident_reference=message.incident_reference,
+                    detail=str(exc),
+                )
                 results.append(DeliveryResult(notifier.name, "failed", None, detail=str(exc)))
+
+        # Swallowing the exception keeps the workflow alive, but a card that
+        # reached nobody must still be loud somewhere: the delivery rows are
+        # only visible to someone already looking at the incident, and the
+        # whole point of these messages is that nobody is looking yet.
+        if not self._notifiers:
+            logger.debug(
+                "notification dropped: no channels configured",
+                kind=message.kind,
+                incident_reference=message.incident_reference,
+            )
+        elif all(r.status == "failed" for r in results):
+            logger.error(
+                "notification undeliverable on every channel",
+                kind=message.kind,
+                incident_reference=message.incident_reference,
+                channels=[r.channel for r in results],
+            )
         return results

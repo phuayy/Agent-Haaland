@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 
 from haaland.agent.nodes._context import node_context
-from haaland.domain.enums import ActorType, IncidentStatus
+from haaland.domain.enums import ActorType, IncidentStatus, Severity
 from haaland.domain.errors import AIRefusalError
 from haaland.domain.events import EventType
 from haaland.domain.models import NotificationMessage, PostmortemProse
@@ -104,14 +104,26 @@ async def generate_report_node(state, deps) -> dict:
                 payload={"chain_valid": chain["valid"]},
             )
 
+        # A run that arrives here from escalate_manual is FAILED, not fixed.
+        # Announcing that as a plain green "incident closed" is the report
+        # lying by omission — the post-mortem is ready either way, but the
+        # card has to say which of the two endings this was.
+        escalated_run = current_status == IncidentStatus.FAILED
+        outcome = "escalated to humans, no automated fix shipped" if escalated_run else "remediated"
         closing_message = NotificationMessage(
-            kind="incident_closed",
-            title=f"[{incident.reference}] Incident closed — post-mortem ready",
+            kind="escalated" if escalated_run else "incident_closed",
+            title=(
+                f"[{incident.reference}] Post-mortem ready — closed after manual escalation"
+                if escalated_run
+                else f"[{incident.reference}] Incident closed — post-mortem ready"
+            ),
             body_markdown=(
+                f"**Outcome:** {outcome}\n"
                 f"**Root cause:** {incident.root_cause_summary or 'n/a'}\n"
                 f"**Audit chain:** {'verified' if chain['valid'] else 'BROKEN — investigate'}"
             ),
             incident_reference=incident.reference,
+            severity=Severity(incident.severity) if incident.severity else None,
             links={
                 "Post-mortem": f"{deps.settings.app_base_url}/api/incidents/{incident.reference}/postmortem",
                 **({"PR": state["pr_url"]} if state.get("pr_url") else {}),
