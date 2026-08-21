@@ -67,13 +67,13 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-screen w-60 shrink-0 flex-col bg-sidebar px-3 py-4 text-sidebar-foreground">
-      <div className="flex items-center gap-2.5 px-1 pb-6">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-primary text-[13px] font-bold text-sidebar-primary-foreground">
+      <div className="flex items-center gap-3 px-1 pb-6">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sidebar-primary text-xl font-extrabold text-sidebar-primary-foreground">
           H
         </div>
         <div className="leading-tight">
-          <div className="text-[13.5px] font-semibold text-white">Agent Haaland</div>
-          <div className="text-[10px] font-medium tracking-wide text-sidebar-foreground/70 uppercase">
+          <div className="text-lg font-extrabold tracking-tight text-white">Agent Haaland</div>
+          <div className="mt-0.5 text-xs font-medium tracking-wider text-slate-400 uppercase">
             Incident Operations
           </div>
         </div>
