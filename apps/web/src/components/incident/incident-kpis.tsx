@@ -1,23 +1,5 @@
 import type { IncidentSummary } from "@/lib/api/types";
 
-function formatDuration(minutes: number): string {
-  if (minutes < 60) return `${Math.round(minutes)}m`;
-  const hours = minutes / 60;
-  if (hours < 24) return `${hours.toFixed(1)}h`;
-  return `${(hours / 24).toFixed(1)}d`;
-}
-
-function medianMttrMinutes(incidents: IncidentSummary[]): number | null {
-  const durations = incidents
-    .filter((i) => i.closed_at)
-    .map((i) => (new Date(i.closed_at as string).getTime() - new Date(i.detected_at).getTime()) / 60_000)
-    .filter((m) => m >= 0)
-    .sort((a, b) => a - b);
-  if (durations.length === 0) return null;
-  const mid = Math.floor(durations.length / 2);
-  return durations.length % 2 === 0 ? (durations[mid - 1] + durations[mid]) / 2 : durations[mid];
-}
-
 function Kpi({
   label,
   value,
@@ -43,10 +25,9 @@ export function IncidentKpis({ incidents }: { incidents: IncidentSummary[] }) {
   const active = incidents.filter((i) => !terminal.has(i.status)).length;
   const awaitingApproval = incidents.filter((i) => i.status === "awaiting_approval").length;
   const closed = incidents.filter((i) => i.status === "closed").length;
-  const mttr = medianMttrMinutes(incidents);
 
   return (
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-3">
       <Kpi
         label="Active incidents"
         value={String(active)}
@@ -64,12 +45,6 @@ export function IncidentKpis({ incidents }: { incidents: IncidentSummary[] }) {
         value={String(closed)}
         hint="fully resolved"
         accent="border-t-emerald-400"
-      />
-      <Kpi
-        label="Median MTTR"
-        value={mttr === null ? "—" : formatDuration(mttr)}
-        hint={mttr === null ? "no closed incidents yet" : "detection to closure"}
-        accent="border-t-violet-400"
       />
     </div>
   );

@@ -167,7 +167,7 @@ export function IncidentDetailCard({
             </div>
           </Block>
 
-          <Block icon={<Sparkles className="h-3.5 w-3.5 text-violet-600" />} title="AI root cause">
+          <Block icon={<Sparkles className="h-3.5 w-3.5 text-violet-600" />} title="AI Root Cause">
             <div
               className={cn(
                 "rounded-lg border border-border bg-muted/60 transition-all duration-300 ease-in-out",
@@ -212,13 +212,13 @@ export function IncidentDetailCard({
             </div>
           </Block>
 
-          <Block title="Audit timeline">
+          <Block title="Audit Timeline">
             <div className="rounded-lg border border-border bg-muted/60 p-4">
               <AuditTimeline reference={reference} />
             </div>
           </Block>
 
-          <Block icon={<Wrench className="h-3.5 w-3.5 text-muted-foreground" />} title="Post-mortem">
+          <Block icon={<Wrench className="h-3.5 w-3.5 text-muted-foreground" />} title="Post-Mortem">
             <div className="h-64 overflow-hidden">
               <PostmortemPanel reference={reference} />
             </div>
