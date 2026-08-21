@@ -62,7 +62,10 @@ async def locate_code_node(state, deps) -> dict:
         if not candidates:
             # Never silently proceed on zero candidates: name the situation
             # so the post-mortem reads "cold start", not "the model failed".
-            summary += " — no traceback frame or error literal matched; diagnosis runs in cold-start exploration mode"
+            summary += (
+                " — no traceback frame or error literal matched; "
+                "diagnosis runs in cold-start exploration mode"
+            )
         await ctx.audit.record(
             incident_id,
             EventType.CODE_LOCATED.value,

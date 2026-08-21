@@ -121,6 +121,43 @@ def test_symbol_references_expand_to_callers_outside_the_traceback(tmp_path):
     assert all(r.confidence < min(c.confidence for c in primaries) for r in related)
 
 
+def test_error_template_grep_matches_format_string_not_rendered_value(tmp_path):
+    """Source contains the format string, never the rendered value: 5000ms is
+    runtime data and must be stripped before grepping — and the pass must not
+    be Python-gated (this culprit is a .go file)."""
+    workspace = _workspace(tmp_path)
+    (tmp_path / "app" / "pool.go").write_text(
+        "package app\n\n"
+        "func acquire() error {\n"
+        '\treturn fmt.Errorf("connection pool exhausted after %dms", waitMs)\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    log = "TimeoutError: connection pool exhausted after 5000ms"
+    candidates = CodeSearchService().locate(workspace, log)
+
+    hits = [c for c in candidates if c.reason == "error_signature_grep"]
+    assert hits, f"expected a template-grep candidate, got: {[c.reason for c in candidates]}"
+    assert hits[0].path == "app/pool.go"
+    assert hits[0].confidence == 0.7
+
+
+def test_exception_class_grep_finds_raise_site(tmp_path):
+    workspace = _workspace(tmp_path)
+    (tmp_path / "app" / "pool.py").write_text(
+        "class PoolTimeoutError(Exception):\n    pass\n\n\n"
+        "def acquire(timeout_ms):\n"
+        "    raise PoolTimeoutError(timeout_ms)\n",
+        encoding="utf-8",
+    )
+    log = "PoolTimeoutError: 5000"
+    candidates = CodeSearchService().locate(workspace, log)
+
+    hits = [c for c in candidates if c.reason == "exception_class_grep"]
+    assert hits, f"expected an exception-class candidate, got: {[c.reason for c in candidates]}"
+    assert hits[0].path == "app/pool.py"
+
+
 def test_extract_call_chain_orders_outermost_first():
     assert extract_call_chain(_LOG_TEXT) == ["quote", "apply_discount", "average_item_price"]
 

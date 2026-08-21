@@ -50,6 +50,21 @@ def test_diagnosis_input_marks_missing_call_chain():
     assert "(no traceback frames)" in rendered
 
 
+def test_diagnosis_input_includes_deploy_context():
+    entry = "- abc123def456 2026-08-20 <PERSON_1>: fix pool sizing\n  files: app/pool.py"
+    bundle = _bundle(deploy_context=[{"rendered": entry}])
+    rendered = render_diagnosis_input(bundle)
+    assert "## Recent deployment context" in rendered
+    assert "fix pool sizing" in rendered
+
+
+def test_diagnosis_input_marks_cold_start_and_appends_orientation():
+    rendered = render_diagnosis_input(_bundle(), orientation="### Repository tree (depth 2)\napp/")
+    assert "localization is part" in rendered  # zero candidates named explicitly
+    assert "## Repository orientation (deterministic seed)" in rendered
+    assert "### Repository tree (depth 2)" in rendered
+
+
 def test_test_input_includes_applied_diff():
     rendered = render_test_input(
         _diagnosis(), "Guard empty carts", ["app/pricing.py"],

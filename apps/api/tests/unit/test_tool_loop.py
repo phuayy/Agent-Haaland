@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pytest
 
-from haaland.domain.errors import AIRefusalError
+from haaland.domain.errors import AIInvalidOutputError, AIRefusalError
 from haaland.domain.models import Diagnosis
 from haaland.llm.base import LLMResult, Usage
 from haaland.llm.tools import (
@@ -59,9 +59,16 @@ class ScriptedProvider:
 
     name = "scripted"
 
-    def __init__(self, turns: list[AssistantTurn], *, refuse_on_explore: bool = False) -> None:
+    def __init__(
+        self,
+        turns: list[AssistantTurn],
+        *,
+        refuse_on_explore: bool = False,
+        conclude_result: LLMResult | None = None,
+    ) -> None:
         self._turns = list(turns)
         self._refuse_on_explore = refuse_on_explore
+        self._conclude_result = conclude_result
         self.explore_requests: list[ToolLoopRequest] = []
         self.conclude_request: ToolLoopRequest | None = None
 
@@ -75,7 +82,7 @@ class ScriptedProvider:
 
     async def conclude(self, request: ToolLoopRequest) -> LLMResult:
         self.conclude_request = request
-        return _result(parsed=_DIAGNOSIS)
+        return self._conclude_result or _result(parsed=_DIAGNOSIS)
 
 
 class SpyAnalyses:
@@ -201,6 +208,62 @@ async def test_explore_refusal_raises_but_is_still_charged(tmp_path, redactor):
     with pytest.raises(AIRefusalError):
         await _run(service, _toolbox(tmp_path))
     assert len(budget.charges) == 1
+
+
+async def test_turn_notes_count_down_and_force_convergence(tmp_path, redactor):
+    greedy_turn = AssistantTurn(
+        text="one more look",
+        tool_calls=(ToolCall(id="c", name="list_dir", arguments={"path": "."}),),
+    )
+    provider = ScriptedProvider(turns=[greedy_turn])
+    service, _analyses, _budget = _service(provider, redactor, max_iterations=3)
+
+    await _run(service, _toolbox(tmp_path))
+
+    notes = [r.turn_note for r in provider.explore_requests]
+    assert notes[0] == "[loop status] exploration turns remaining: 3."
+    assert "Converge now" in notes[1]  # remaining == 2
+    assert "Converge now" in notes[2]  # remaining == 1
+    # The conclusion turn carries no ephemeral note.
+    assert provider.conclude_request.turn_note is None
+
+
+async def test_cold_start_swaps_loop_prompt_and_raises_turn_budget(tmp_path, redactor):
+    greedy_turn = AssistantTurn(
+        text="hunting",
+        tool_calls=(ToolCall(id="c", name="list_dir", arguments={"path": "."}),),
+    )
+    provider = ScriptedProvider(turns=[greedy_turn])
+    service, _analyses, _budget = _service(provider, redactor, max_iterations=2)
+
+    await service.run(
+        incident_id=_INCIDENT_ID,
+        stage="diagnose",
+        redacted_text="log lines here",
+        output_schema=Diagnosis,
+        toolbox=_toolbox(tmp_path),
+        cold_start=True,
+        max_iterations=4,
+    )
+
+    # The override outranks the constructor ceiling…
+    assert len(provider.explore_requests) == 4
+    # …and the cold-start system block replaces the candidate-shaped one.
+    loop_block = provider.explore_requests[0].system_blocks[2]
+    assert "cold start" in loop_block.lower()
+    assert "Localization is your job" in loop_block
+
+
+async def test_invalid_conclusion_raises_invalid_output_not_refusal(tmp_path, redactor):
+    provider = ScriptedProvider(
+        turns=[AssistantTurn(text="done")],
+        conclude_result=_result(parsed=None, stop_reason="truncated"),
+    )
+    service, _analyses, _budget = _service(provider, redactor)
+
+    with pytest.raises(AIInvalidOutputError) as excinfo:
+        await _run(service, _toolbox(tmp_path))
+    assert excinfo.value.truncated
 
 
 def test_capability_detection():
