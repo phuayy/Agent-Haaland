@@ -89,6 +89,10 @@ class ToolLoopRequest:
     effort: Literal["low", "medium", "high"] = "medium"
     max_tokens: int = 8000
     model: str | None = None
+    # Ephemeral per-turn status line ("turns remaining: N", convergence
+    # nudges) rendered by each provider as a trailing user-side message.
+    # Set by the loop on explore turns only; never part of the transcript.
+    turn_note: str | None = None
 
 
 @dataclass

@@ -26,9 +26,28 @@ class BudgetExceeded(HaalandError):
 
 
 class AIRefusalError(HaalandError):
+    """The model declined the request (a safety/content refusal). Distinct
+    from AIInvalidOutputError — a truncated or off-schema response is not a
+    refusal, and conflating them makes post-mortems chase safety triggers
+    for what was a token-budget problem."""
+
     def __init__(self, stage: str) -> None:
         super().__init__(f"model refused stage={stage}")
         self.stage = stage
+
+
+class AIInvalidOutputError(HaalandError):
+    """The model answered but the output could not be used: it failed schema
+    validation after the repair retry, or was truncated at the token ceiling
+    (stop_reason='truncated'). The raw text and validation detail are
+    persisted on the ai_analyses row for the audit trail."""
+
+    def __init__(self, stage: str, *, detail: str | None = None, truncated: bool = False) -> None:
+        kind = "truncated" if truncated else "invalid"
+        super().__init__(f"model output {kind} stage={stage}" + (f": {detail}" if detail else ""))
+        self.stage = stage
+        self.detail = detail
+        self.truncated = truncated
 
 
 class RedactionUnavailable(HaalandError):

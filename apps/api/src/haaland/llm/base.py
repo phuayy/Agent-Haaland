@@ -54,10 +54,19 @@ class LLMResult:
     model: str
     provider: str
     raw: Any = field(default=None, repr=False)
+    # Set only when parsed is None for a non-refusal reason: the model's raw
+    # text plus the validation/truncation detail, so the ai_analyses row can
+    # distinguish a truncation from a safety refusal after the fact.
+    raw_text: str | None = field(default=None, repr=False)
+    error_detail: str | None = None
 
     @property
     def refused(self) -> bool:
         return self.stop_reason == "refusal"
+
+    @property
+    def truncated(self) -> bool:
+        return self.stop_reason == "truncated"
 
 
 class LLMProvider(Protocol):

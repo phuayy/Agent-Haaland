@@ -62,7 +62,13 @@ _PEAK_HOURS_UTC = frozenset(range(1, 4)) | frozenset(range(6, 10))
 # reasoning_effort scale is "low" | "high" | "max" and defaults to "high".
 _EFFORT_MAP = {"low": "low", "medium": "high", "high": "max"}
 
-_STREAM_ABOVE_MAX_TOKENS = 16000
+# Stream at or above this ceiling — long completions over plain HTTP risk
+# idle-timeout resets, and reasoning tokens inflate wall time well before the
+# first output byte.
+_STREAM_ABOVE_MAX_TOKENS = 8000
+# On finish_reason="length" the retry raises the ceiling (doubling, capped
+# here) instead of repeating the same truncation with the same budget.
+_MAX_RETRY_MAX_TOKENS = 65536
 
 _SCHEMA_BLOCK = (
     "## Output format\n"
@@ -143,11 +149,13 @@ class DeepSeekProvider:
         request: LLMRequest | ToolLoopRequest,
         messages: list[dict[str, Any]],
         extra_kwargs: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
     ) -> tuple[str, str, Any, Any]:
+        effective_max_tokens = max_tokens or request.max_tokens
         kwargs: dict[str, Any] = dict(
             model=model,
             messages=messages,
-            max_tokens=request.max_tokens,
+            max_tokens=effective_max_tokens,
             response_format={"type": "json_object"},
             reasoning_effort=_EFFORT_MAP.get(request.effort, "high"),
             **(extra_kwargs or {}),
@@ -155,7 +163,7 @@ class DeepSeekProvider:
         if self._thinking:
             kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
 
-        if request.max_tokens > _STREAM_ABOVE_MAX_TOKENS:
+        if effective_max_tokens >= _STREAM_ABOVE_MAX_TOKENS:
             return await self._complete_streaming(kwargs)
 
         resp = await self._client.chat.completions.create(**kwargs)
@@ -225,19 +233,33 @@ class DeepSeekProvider:
         finish_reason = "stop"
         raw: Any = None
         parsed: BaseModel | None = None
+        text = ""
+        error_detail: str | None = None
+        max_tokens = request.max_tokens
 
         for attempt in range(self._repair_attempts + 1):
             text, finish_reason, raw_usage, raw = await self._complete(
-                model, request, messages, extra_kwargs
+                model, request, messages, extra_kwargs, max_tokens=max_tokens
             )
             total = self._accumulate(total, self._usage(raw_usage))
 
             if finish_reason == "content_filter":
                 break
+            if finish_reason == "length":
+                # Truncation, not a schema problem: retrying with the same
+                # ceiling would truncate identically. Raise the ceiling and
+                # retry the original messages (no repair turn appended).
+                error_detail = f"truncated at max_tokens={max_tokens}"
+                if attempt == self._repair_attempts or max_tokens >= _MAX_RETRY_MAX_TOKENS:
+                    break
+                max_tokens = min(max_tokens * 2, _MAX_RETRY_MAX_TOKENS)
+                continue
             try:
                 parsed = parse_payload(text, request.output_schema)
+                error_detail = None
                 break
             except (ValidationError, ValueError) as exc:
+                error_detail = str(exc)[:2000]
                 if attempt == self._repair_attempts:
                     break
                 messages = [
@@ -247,13 +269,15 @@ class DeepSeekProvider:
                         "role": "user",
                         "content": (
                             "That response did not validate against the required schema:\n"
-                            f"{str(exc)[:2000]}\n\nReturn the corrected json object only."
+                            f"{error_detail}\n\nReturn the corrected json object only."
                         ),
                     },
                 ]
 
         if finish_reason == "content_filter":
             stop_reason = "refusal"
+        elif parsed is None and finish_reason == "length":
+            stop_reason = "truncated"
         elif parsed is None:
             stop_reason = "invalid_output"
         else:
@@ -268,6 +292,8 @@ class DeepSeekProvider:
             model=model,
             provider=self.name,
             raw=raw,
+            raw_text=text if parsed is None else None,
+            error_detail=error_detail if parsed is None else None,
         )
 
     # -- tool loop (llm/tools.py) ---------------------------------------
@@ -315,6 +341,8 @@ class DeepSeekProvider:
                 messages.append(
                     {"role": "tool", "tool_call_id": outcome.call_id, "content": outcome.content.text}
                 )
+        if request.turn_note:
+            messages.append({"role": "user", "content": request.turn_note})
         return messages
 
     async def explore(self, request: ToolLoopRequest) -> ToolTurnResult:

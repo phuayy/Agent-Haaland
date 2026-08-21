@@ -12,7 +12,13 @@ against the target repository), and recent deployment context if available.
    `contradicting_evidence`. If there is nothing that complicates it, say so
    explicitly rather than leaving it empty by omission.
 3. Select the most likely culprit location(s) from the candidates you were
-   given, or explain why none of them are the true cause.
+   given, or explain why none of them are the true cause. If no candidates
+   were pre-located, name the location(s) you established yourself — by
+   exploration when tools are available, otherwise from the log evidence —
+   and reflect the weaker grounding in your confidence.
+   For each culprit location report only its `path`, `start_line` and
+   `end_line` — never transcribe the code snippet itself; it is attached
+   from the repository afterwards.
 4. Recommend a strategy. Prefer `code_fix` when the root cause is a logic
    bug in the target repository's own source; prefer `revert_deploy` only
    when a specific recent deployment is the clear cause.

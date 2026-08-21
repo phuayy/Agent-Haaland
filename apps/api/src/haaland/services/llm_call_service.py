@@ -12,28 +12,35 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from haaland.db.repositories.ai_analyses import AIAnalysisRepository
-from haaland.domain.errors import AIRefusalError
+from haaland.domain.errors import AIInvalidOutputError, AIRefusalError
 from haaland.llm.base import LLMProvider, LLMRequest, RedactedPayload
 from haaland.llm.budget import BudgetGuard
 from haaland.llm.prompts import load_stage_instructions, load_system_base
 
 T = TypeVar("T", bound=BaseModel)
 
+# classify is a structurally trivial output (a severity plus a rationale) —
+# it does not need to pay high-tier reasoning on providers where "medium"
+# maps upward (DeepSeek's low|high|max scale has no medium).
 _EFFORT_BY_STAGE = {
-    "classify": "medium",
+    "classify": "low",
     "diagnose": "high",
     "evaluate": "high",
     "remediate": "high",
     "test": "medium",
     "report": "medium",
 }
+# Ceilings sized so reasoning tokens (which DeepSeek counts against
+# max_tokens) cannot starve the real output. remediate is the outlier:
+# FileChange.new_content is entire post-fix files, not diffs — one 400-line
+# source file is ~5k tokens before any reasoning is spent.
 _MAX_TOKENS_BY_STAGE = {
-    "classify": 4000,
-    "diagnose": 16000,
-    "evaluate": 8000,
-    "remediate": 12000,
-    "test": 6000,
-    "report": 20000,
+    "classify": 12000,
+    "diagnose": 24000,
+    "evaluate": 16000,
+    "remediate": 64000,
+    "test": 12000,
+    "report": 24000,
 }
 
 
@@ -79,7 +86,13 @@ class LLMCallService:
         )
         await self._budget.record_and_check(incident_id, result.cost_usd)
 
-        if result.refused or result.parsed is None:
+        if result.refused:
             raise AIRefusalError(stage)
+        if result.parsed is None:
+            # Not a refusal: truncation or schema-invalid output. Keep the two
+            # distinguishable — the raw text and detail are on the audit row.
+            raise AIInvalidOutputError(
+                stage, detail=result.error_detail, truncated=result.truncated
+            )
 
         return result.parsed

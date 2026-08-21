@@ -22,6 +22,7 @@ class EventType(StrEnum):
     AI_FIX_EVALUATED = "ai.fix_evaluated"
     AI_REMEDIATION_DRAFTED = "ai.remediation_drafted"
     AI_REFUSED = "ai.refused"
+    AI_INVALID_OUTPUT = "ai.invalid_output"
     REMEDIATION_REJECTED_BY_POLICY = "ai.remediation_rejected_by_policy"
     PATCH_APPLIED = "patch.applied"
     CHECK_RAN = "check.ran"

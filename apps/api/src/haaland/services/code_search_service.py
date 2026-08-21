@@ -10,7 +10,16 @@ Locating runs in three passes, cheapest signal first:
 1. traceback frames — file:line straight from the log, snippet widened to
    the enclosing function via AST;
 2. grep fallbacks — the failing function's name (`def <name>`) when a
-   frame's path doesn't map into the clone, and the error-signature text;
+   frame's path doesn't map into the clone, and the error-signature text.
+   The signature is grepped as a *log template*, not a rendered message:
+   runtime data (numbers, durations, UUIDs, quoted values, paths) is
+   stripped first, because source contains the format string, never the
+   rendered value — "connection pool exhausted after 5000ms" can only match
+   as "connection pool exhausted". Three descending-confidence passes:
+   static literal (0.7), exception class raise/definition site (0.55),
+   identifier co-occurrence (0.4). All grep passes run over every searchable
+   text file in the clone — a Go/TS/Java repo must not get zero candidates
+   just because the AST passes are Python-only;
 3. symbol references — one hop outward from the primaries along the call
    graph (callers and callees defined in this repo), so the diagnosis
    prompt carries the failing function's neighbourhood, not just the frame
@@ -24,12 +33,18 @@ import re
 from dataclasses import dataclass
 
 from haaland.domain.models import CodeLocation
+from haaland.services.code_toolbox import iter_searchable
 from haaland.services.workspace_service import Workspace
 
 _TRACEBACK_FRAME = re.compile(r'File "([^"]+)", line (\d+)(?:, in (\S+))?')
 _MAX_PRIMARY = 8
 _MAX_RELATED = 4
 _CONTEXT_LINES = 6
+# Per-pass ceilings for the grep fallbacks, so a common phrase can't flood
+# the candidate set before ranking.
+_MAX_LITERAL_MATCHES = 6
+_MAX_CLASS_MATCHES = 4
+_MAX_COOCCURRENCE_MATCHES = 4
 
 
 def parse_traceback_frames(log_text: str) -> list[tuple[str, int, str | None]]:
@@ -47,17 +62,66 @@ def extract_call_chain(log_text: str) -> list[str]:
     return chain
 
 
-def _extract_error_signature(log_text: str) -> str | None:
+def _extract_error_signature(log_text: str) -> tuple[str | None, str | None]:
     """The last 'SomeError: message' style line, if any — a decent proxy for
-    the error signature grouping docs/04 describes for the Loki adapter."""
+    the error signature grouping docs/04 describes for the Loki adapter.
+    Returns (exception_class, message); either may be None."""
     lines = [line.strip() for line in log_text.strip().splitlines() if line.strip()]
     pattern = re.compile(r"\b([A-Z][A-Za-z0-9_]*(?:Error|Exception))\b:?\s*(.*)")
     for line in reversed(lines):
         m = pattern.search(line)
         if m:
-            message = m.group(2).strip()
-            return message or m.group(1)
-    return None
+            return m.group(1), m.group(2).strip() or None
+    return None, None
+
+
+# Runtime data inside a rendered log message — never present in source, which
+# carries the format string. Stripped before grepping so the needle is the
+# log *template*, not the rendered value.
+_VARIABLE_PART = re.compile(
+    r"""
+      '[^']*' | "[^"]*"                                     # quoted values
+    | \b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
+       -[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b                    # UUIDs
+    | \b0x[0-9a-fA-F]+\b                                    # hex ids
+    | (?:[A-Za-z]:)?(?:[\\/][\w.\-]+){2,}                   # filesystem paths
+    | \b\d+(?:[.,]\d+)*\s*
+       (?:ms|s|sec|secs|seconds|m|min|mins|minutes|h|hrs|hours
+        |%|b|kb|mb|gb|tb|kib|mib|gib)?\b                    # numbers + units
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+_IDENTIFIER_STOPWORDS = frozenset(
+    {"after", "with", "from", "this", "that", "when", "while", "error", "exception",
+     "failed", "failure", "unable", "could", "cannot", "during", "because", "invalid",
+     "unexpected", "internal", "request", "response"}
+)
+
+
+def _static_literal(message: str) -> str | None:
+    """The longest static run of the message once variable parts are
+    stripped — the piece most likely to appear verbatim in the source's
+    format string."""
+    runs = [
+        run.strip(" \t.,:;!?()[]{}<>=-")
+        for run in _VARIABLE_PART.sub("\x00", message).split("\x00")
+    ]
+    runs = [r for r in runs if len(r) >= 12 or len(r.split()) >= 3]
+    if not runs:
+        return None
+    return max(runs, key=len)[:80]
+
+
+def _identifier_terms(message: str) -> list[str]:
+    """Domain-identifier-ish words from the message (e.g. pool, timeout,
+    connection) for the lowest-confidence co-occurrence pass."""
+    words = re.findall(r"[A-Za-z_]{4,}", message.lower())
+    seen: list[str] = []
+    for w in words:
+        if w not in _IDENTIFIER_STOPWORDS and w not in seen:
+            seen.append(w)
+    return seen[:6]
 
 
 @dataclass(frozen=True)
@@ -128,8 +192,7 @@ def _relative_path(workspace: Workspace, raw_path: str) -> str | None:
     originally ran; normalise to a path relative to the cloned workspace by
     matching the trailing path segments."""
     raw = raw_path.replace("\\", "/")
-    for candidate in workspace.iter_python_files():
-        rel = candidate.relative_to(workspace.path).as_posix()
+    for rel, _path in iter_searchable(workspace):
         if raw.endswith(rel):
             return rel
     return None
@@ -204,32 +267,98 @@ class CodeSearchService:
                     confidence=0.6,
                 )
 
-        signature = _extract_error_signature(log_text)
-        if signature:
-            needle = signature[:80]
-            for path in workspace.iter_python_files():
-                rel_path = path.relative_to(workspace.path).as_posix()
-                content = workspace.read_file(rel_path) or ""
-                idx = content.find(needle)
-                if idx == -1:
-                    continue
-                line_no = content.count("\n", 0, idx) + 1
-                start, end = max(1, line_no - _CONTEXT_LINES), line_no + _CONTEXT_LINES
-                key = (rel_path, start, end)
-                if key in candidates:
-                    continue
-                candidates[key] = CodeLocation(
-                    path=rel_path,
-                    start_line=start,
-                    end_line=end,
-                    snippet=_snippet(workspace, rel_path, start, end),
-                    reason="error_signature_grep",
-                    confidence=0.5,
-                )
+        exc_class, message = _extract_error_signature(log_text)
+        self._grep_error_template(workspace, exc_class, message, candidates)
 
         primaries = sorted(candidates.values(), key=lambda c: c.confidence, reverse=True)[:_MAX_PRIMARY]
         related = self._expand_symbol_references(workspace, index, primaries, candidates)
         return primaries + related
+
+    def _grep_error_template(
+        self,
+        workspace: Workspace,
+        exc_class: str | None,
+        message: str | None,
+        candidates: dict[tuple[str, int, int], CodeLocation],
+    ) -> None:
+        """Three descending-confidence passes over every searchable text file
+        (not just Python — the AST passes are Python-gated, these are not):
+
+        1. the message's longest static literal run, runtime data stripped
+           (source holds the format string, never the rendered value) — 0.7;
+        2. the exception class at a raise/definition/construction site — 0.55;
+        3. lines where >= 2 identifier terms from the message co-occur — 0.4.
+        """
+        literal = _static_literal(message) if message else None
+        terms = _identifier_terms(message) if message else []
+
+        class_rx = None
+        if exc_class:
+            # Raise/definition/construction sites only — a bare mention of a
+            # builtin like TimeoutError would match half the codebase.
+            escaped = re.escape(exc_class)
+            class_rx = re.compile(
+                rf"(?:\braise\s+(?:\w+\.)*{escaped}\b"
+                rf"|\bclass\s+{escaped}\b"
+                rf"|\b(?:throw|panic|errors\.New)\b.*\b{escaped}\b"
+                rf"|\b{escaped}\s*\()"
+            )
+
+        found = {"literal": 0, "class": 0, "cooccur": 0}
+        for rel_path, _path in iter_searchable(workspace):
+            if all(
+                found[k] >= cap
+                for k, cap in (
+                    ("literal", _MAX_LITERAL_MATCHES),
+                    ("class", _MAX_CLASS_MATCHES),
+                    ("cooccur", _MAX_COOCCURRENCE_MATCHES),
+                )
+            ):
+                return
+            content = workspace.read_file(rel_path) or ""
+            for line_no, line in enumerate(content.splitlines(), start=1):
+                if literal and found["literal"] < _MAX_LITERAL_MATCHES and literal in line:
+                    self._add_grep_candidate(
+                        workspace, candidates, rel_path, line_no, "error_signature_grep", 0.7
+                    )
+                    found["literal"] += 1
+                elif class_rx and found["class"] < _MAX_CLASS_MATCHES and class_rx.search(line):
+                    self._add_grep_candidate(
+                        workspace, candidates, rel_path, line_no, "exception_class_grep", 0.55
+                    )
+                    found["class"] += 1
+                elif (
+                    len(terms) >= 2
+                    and found["cooccur"] < _MAX_COOCCURRENCE_MATCHES
+                    and sum(t in line.lower() for t in terms) >= 2
+                ):
+                    self._add_grep_candidate(
+                        workspace, candidates, rel_path, line_no, "identifier_cooccurrence_grep", 0.4
+                    )
+                    found["cooccur"] += 1
+
+    @staticmethod
+    def _add_grep_candidate(
+        workspace: Workspace,
+        candidates: dict[tuple[str, int, int], CodeLocation],
+        rel_path: str,
+        line_no: int,
+        reason: str,
+        confidence: float,
+    ) -> None:
+        start, end = max(1, line_no - _CONTEXT_LINES), line_no + _CONTEXT_LINES
+        key = (rel_path, start, end)
+        existing = candidates.get(key)
+        if existing is not None and existing.confidence >= confidence:
+            return
+        candidates[key] = CodeLocation(
+            path=rel_path,
+            start_line=start,
+            end_line=end,
+            snippet=_snippet(workspace, rel_path, start, end),
+            reason=reason,
+            confidence=confidence,
+        )
 
     def _expand_symbol_references(
         self,

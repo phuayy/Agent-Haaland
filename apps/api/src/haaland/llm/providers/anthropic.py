@@ -161,6 +161,18 @@ class AnthropicProvider:
                         ],
                     }
                 )
+        if request.turn_note:
+            note = {"type": "text", "text": request.turn_note}
+            # The API merges nothing for us: extend the trailing user turn's
+            # content rather than appending a second consecutive user message.
+            if messages and messages[-1]["role"] == "user":
+                last = messages[-1]
+                if isinstance(last["content"], str):
+                    last["content"] = [{"type": "text", "text": last["content"]}, note]
+                else:
+                    last["content"] = [*last["content"], note]
+            else:
+                messages.append({"role": "user", "content": [note]})
         return messages
 
     async def explore(self, request: ToolLoopRequest) -> ToolTurnResult:

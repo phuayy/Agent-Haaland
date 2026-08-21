@@ -28,7 +28,7 @@ from typing import Final, Literal, TypeVar, cast
 from pydantic import BaseModel
 
 from haaland.db.repositories.ai_analyses import AIAnalysisRepository
-from haaland.domain.errors import AIRefusalError
+from haaland.domain.errors import AIInvalidOutputError, AIRefusalError
 from haaland.llm.base import RedactedPayload
 from haaland.llm.budget import BudgetGuard
 from haaland.llm.prompts import load_prompt, load_stage_instructions, load_system_base
@@ -45,11 +45,21 @@ from haaland.services.code_toolbox import CodeToolbox
 T = TypeVar("T", bound=BaseModel)
 
 # Exploration turns emit a short thought plus tool calls; the conclusion is
-# the stage's real deliverable and gets the diagnose-sized ceiling.
+# the stage's real deliverable and gets the diagnose-sized ceiling (sized so
+# reasoning tokens, which DeepSeek counts against max_tokens, cannot starve
+# the structured output).
 _EXPLORE_MAX_TOKENS = 4000
-_CONCLUDE_MAX_TOKENS = 16000
+_CONCLUDE_MAX_TOKENS = 24000
 _EXPLORE_EFFORT: Final[Literal["medium"]] = "medium"
 _CONCLUDE_EFFORT: Final[Literal["high"]] = "high"
+
+_LOOP_PROMPT = "system/tool_loop.md"
+# Cold start: locate_code found zero candidates, so localization itself is
+# the model's job — different ground rules, bigger turn budget.
+_COLD_START_LOOP_PROMPT = "system/tool_loop_cold_start.md"
+# At this many turns remaining (or fewer) the per-turn note tells the model
+# to converge on its best hypothesis instead of exploring further.
+_CONVERGE_AT_REMAINING = 2
 
 
 @dataclass
@@ -84,18 +94,28 @@ class ToolLoopService:
         output_schema: type[T],
         toolbox: CodeToolbox,
         redaction_map_id: uuid.UUID | None = None,
+        cold_start: bool = False,
+        max_iterations: int | None = None,
     ) -> ToolLoopOutcome[T]:
         base = load_system_base()
         stage_prompt = load_stage_instructions(stage)
-        loop_prompt = load_prompt("system/tool_loop.md")
+        loop_prompt = load_prompt(_COLD_START_LOOP_PROMPT if cold_start else _LOOP_PROMPT)
         system_blocks = [base.text, stage_prompt.text, loop_prompt.text]
         tools = toolbox.specs()
+        turn_budget = max_iterations or self._max_iterations
 
         transcript: list[ToolExchange] = []
         total_tool_calls = 0
         model_turns = 0
 
-        for turn_no in range(self._max_iterations):
+        for turn_no in range(turn_budget):
+            remaining = turn_budget - turn_no
+            turn_note = f"[loop status] exploration turns remaining: {remaining}."
+            if remaining <= _CONVERGE_AT_REMAINING:
+                turn_note += (
+                    " Converge now — state your best hypothesis and the file:line "
+                    "supporting it, then stop calling tools."
+                )
             turn = await self._llm.explore(
                 ToolLoopRequest(
                     stage=stage,
@@ -106,6 +126,7 @@ class ToolLoopService:
                     transcript=transcript,
                     effort=_EXPLORE_EFFORT,
                     max_tokens=_EXPLORE_MAX_TOKENS,
+                    turn_note=turn_note,
                 )
             )
             model_turns += 1
@@ -156,8 +177,12 @@ class ToolLoopService:
         )
         await self._budget.record_and_check(incident_id, result.cost_usd)
 
-        if result.refused or result.parsed is None:
+        if result.refused:
             raise AIRefusalError(stage)
+        if result.parsed is None:
+            raise AIInvalidOutputError(
+                stage, detail=result.error_detail, truncated=result.truncated
+            )
         return ToolLoopOutcome(
             parsed=cast(T, result.parsed), turns=model_turns, tool_calls=total_tool_calls
         )

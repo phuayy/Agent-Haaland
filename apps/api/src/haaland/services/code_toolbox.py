@@ -47,6 +47,87 @@ _BINARY_SNIFF_BYTES = 8192
 _TRUNCATED = "\n[output truncated]"
 
 
+def iter_searchable(workspace: Workspace) -> Iterator[tuple[str, Path]]:
+    """Repo files worth reading: vendor/VCS dirs, oversized files and
+    binaries excluded. Yields (rel_path, absolute_path). Shared with
+    code_search_service so deterministic candidate location and the agentic
+    toolbox agree on what 'the repo' is — all text files, not just .py."""
+    for path in workspace.iter_files():
+        rel = path.relative_to(workspace.path).as_posix()
+        if any(part in _SKIP_DIRS for part in path.parts):
+            continue
+        try:
+            if path.stat().st_size > _MAX_FILE_BYTES:
+                continue
+            with path.open("rb") as fh:
+                if b"\x00" in fh.read(_BINARY_SNIFF_BYTES):
+                    continue
+        except OSError:
+            continue
+        yield rel, path
+
+
+_MANIFEST_NAMES = (
+    "pyproject.toml", "requirements.txt", "package.json", "go.mod",
+    "Cargo.toml", "pom.xml", "build.gradle", "composer.json", "Gemfile",
+)
+_ENTRYPOINT_STEMS = frozenset(
+    {"main", "app", "server", "index", "cli", "wsgi", "asgi", "manage", "worker"}
+)
+_SEED_MAX_TREE_ENTRIES = 120
+_SEED_MANIFEST_LINES = 60
+
+
+def orientation_seed(workspace: Workspace) -> str:
+    """Deterministic cold-start orientation: repo tree to depth 2, dependency
+    manifests, and entrypoint-looking files — so a loop that starts with zero
+    candidates doesn't burn turns on `list_dir .`."""
+    tree: list[str] = []
+    root = workspace.path
+
+    def _listing(directory: Path, depth: int) -> None:
+        if len(tree) >= _SEED_MAX_TREE_ENTRIES:
+            return
+        try:
+            entries = sorted(directory.iterdir(), key=lambda e: (e.is_file(), e.name))
+        except OSError:
+            return
+        for entry in entries:
+            if entry.name in _SKIP_DIRS or entry.name.startswith("."):
+                continue
+            if len(tree) >= _SEED_MAX_TREE_ENTRIES:
+                tree.append("[tree truncated]")
+                return
+            rel = entry.relative_to(root).as_posix()
+            tree.append(rel + "/" if entry.is_dir() else rel)
+            if entry.is_dir() and depth < 2:
+                _listing(entry, depth + 1)
+
+    _listing(root, 1)
+
+    manifests: list[str] = []
+    entrypoints: list[str] = []
+    for rel, path in iter_searchable(workspace):
+        name = path.name
+        if name in _MANIFEST_NAMES:
+            manifests.append(rel)
+        if path.stem.lower() in _ENTRYPOINT_STEMS:
+            entrypoints.append(rel)
+
+    parts = ["### Repository tree (depth 2)", "\n".join(tree) or "(empty)"]
+    if manifests:
+        parts.append("### Dependency manifests")
+        parts.append("\n".join(manifests))
+        for rel in manifests[:2]:
+            content = workspace.read_file(rel) or ""
+            head = "\n".join(content.splitlines()[:_SEED_MANIFEST_LINES])
+            parts.append(f"#### {rel} (first {_SEED_MANIFEST_LINES} lines)\n```\n{head}\n```")
+    if entrypoints:
+        parts.append("### Likely entrypoint files")
+        parts.append("\n".join(sorted(entrypoints)[:20]))
+    return "\n\n".join(parts)
+
+
 class GrepParams(BaseModel):
     pattern: str = Field(description="Python regular expression, matched against each line of each file.")
     glob: str | None = Field(
@@ -137,21 +218,7 @@ class CodeToolbox:
     # -- filesystem helpers --------------------------------------------
 
     def _iter_searchable(self) -> Iterator[tuple[str, Path]]:
-        """Repo files worth reading: vendor/VCS dirs, oversized files and
-        binaries excluded. Yields (rel_path, absolute_path)."""
-        for path in self._workspace.iter_files():
-            rel = path.relative_to(self._workspace.path).as_posix()
-            if any(part in _SKIP_DIRS for part in path.parts):
-                continue
-            try:
-                if path.stat().st_size > _MAX_FILE_BYTES:
-                    continue
-                with path.open("rb") as fh:
-                    if b"\x00" in fh.read(_BINARY_SNIFF_BYTES):
-                        continue
-            except OSError:
-                continue
-            yield rel, path
+        yield from iter_searchable(self._workspace)
 
     def _read_contained(self, rel_path: str) -> str:
         content = self._workspace.read_file(rel_path)

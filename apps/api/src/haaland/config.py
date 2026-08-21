@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # regardless of this flag, so it is inert in offline/CI runs.
     agentic_diagnosis_enabled: bool = True
     tool_loop_max_iterations: int = Field(default=12, ge=1, le=50)
+    # Turn budget when locate_code found zero candidates and the loop must
+    # localize from scratch (cold start) — needs more than "a handful".
+    tool_loop_cold_start_max_iterations: int = Field(default=24, ge=1, le=50)
 
     # GitHub — `app` is the production mode (least-privilege, revocable,
     # short-lived installation tokens); `pat` is the single-dev fallback.

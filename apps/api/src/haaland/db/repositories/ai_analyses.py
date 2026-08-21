@@ -23,6 +23,17 @@ class AIAnalysisRepository:
         request_payload: dict,
         redaction_map_id: uuid.UUID | None,
     ) -> AIAnalysis:
+        if result.parsed is not None:
+            response_payload: dict = result.parsed.model_dump(mode="json")
+        else:
+            # Failed parse (truncated / invalid_output / refusal): keep the
+            # raw model text and the validation detail so the post-mortem can
+            # tell a token-budget truncation from a safety refusal.
+            response_payload = {}
+            if result.raw_text:
+                response_payload["raw_text"] = result.raw_text[:20000]
+            if result.error_detail:
+                response_payload["error_detail"] = result.error_detail
         row = AIAnalysis(
             incident_id=incident_id,
             stage=stage,
@@ -32,7 +43,7 @@ class AIAnalysisRepository:
             prompt_hash=prompt.sha256,
             redaction_map_id=redaction_map_id,
             request_payload=request_payload,
-            response_payload=result.parsed.model_dump(mode="json") if result.parsed else {},
+            response_payload=response_payload,
             stop_reason=result.stop_reason,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,

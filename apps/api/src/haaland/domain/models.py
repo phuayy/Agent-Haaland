@@ -89,18 +89,42 @@ class Classification(BaseModel):
     requires_immediate_page: bool
 
 
-class Diagnosis(BaseModel):
+class CulpritLocationRef(BaseModel):
+    """Model-facing culprit reference: path and line span only. The snippet
+    is hydrated server-side from the workspace clone — the model never
+    transcribes code back out (the largest chunk of conclude output and the
+    likeliest truncation failure), and a path that doesn't resolve in the
+    clone becomes a detectable hallucination instead of a plausible-looking
+    snippet."""
+
+    path: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+
+
+class _DiagnosisFields(BaseModel):
     root_cause: str = Field(max_length=1500)
     category: Literal[
         "bad_deploy", "config_change", "resource_exhaustion", "downstream_dependency",
         "infrastructure", "data_issue", "external_provider", "logic_bug", "unknown",
     ]
     confidence: float = Field(ge=0, le=1)
-    culprit_locations: list[CodeLocation] = Field(default_factory=list)
     supporting_evidence: list[EvidenceRef] = Field(min_length=1)
     contradicting_evidence: list[EvidenceRef] = Field(default_factory=list)
     recommended_strategy: RemediationStrategy
     strategy_rationale: str
+
+
+class DiagnosisDraft(_DiagnosisFields):
+    """What the model emits: culprit locations as cheap path+span refs. The
+    diagnose node hydrates them into full CodeLocations (snippet read from
+    the clone) to produce the Diagnosis the rest of the graph consumes."""
+
+    culprit_locations: list[CulpritLocationRef] = Field(default_factory=list)
+
+
+class Diagnosis(_DiagnosisFields):
+    culprit_locations: list[CodeLocation] = Field(default_factory=list)
 
 
 class FixCandidate(BaseModel):

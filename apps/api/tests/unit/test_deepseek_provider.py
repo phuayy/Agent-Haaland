@@ -155,8 +155,48 @@ async def test_unrepairable_output_is_not_silently_returned() -> None:
 
     assert result.parsed is None
     assert result.stop_reason == "invalid_output"
-    # LLMCallService raises AIRefusalError on a None parse, so the graph never
-    # sees a half-parsed stage result.
+    # The raw text and validation detail survive to the ai_analyses row, so a
+    # truncation and a safety refusal are distinguishable after the fact.
+    assert result.raw_text == "still not json"
+    assert result.error_detail
+    # LLMCallService raises AIInvalidOutputError on a None parse (and
+    # AIRefusalError only on a real refusal), so the graph never sees a
+    # half-parsed stage result.
+
+
+async def test_truncation_retries_with_raised_ceiling_then_reports_truncated() -> None:
+    provider, completions = _provider(
+        [
+            _response('{"severity": "P1"', finish_reason="length"),
+            _response('{"severity": "P1"', finish_reason="length"),
+        ]
+    )
+
+    result = await provider.generate(_request(max_tokens=2000))
+
+    assert result.parsed is None
+    assert result.stop_reason == "truncated"
+    assert "truncated at max_tokens" in (result.error_detail or "")
+    # The retry raised the ceiling instead of repeating the same truncation.
+    assert completions.calls[0]["max_tokens"] == 2000
+    assert completions.calls[1]["max_tokens"] == 4000
+    # No repair turn was appended — truncation is not a schema problem.
+    assert len(completions.calls[1]["messages"]) == len(completions.calls[0]["messages"])
+
+
+async def test_truncation_retry_can_succeed() -> None:
+    provider, completions = _provider(
+        [
+            _response('{"severity": "P', finish_reason="length"),
+            _response('{"severity": "P1", "confidence": 0.9}'),
+        ]
+    )
+
+    result = await provider.generate(_request(max_tokens=2000))
+
+    assert result.parsed == Answer(severity="P1", confidence=0.9)
+    assert result.stop_reason == "stop"
+    assert completions.calls[1]["max_tokens"] == 4000
 
 
 async def test_content_filter_maps_to_refusal_without_repair() -> None:
@@ -255,15 +295,18 @@ def _tool_response(*, content: str | None = None, tool_calls=None, finish_reason
     )
 
 
-def _loop_request(transcript=None) -> ToolLoopRequest:
-    return ToolLoopRequest(
+def _loop_request(transcript=None, **overrides) -> ToolLoopRequest:
+    kwargs = dict(
         stage="diagnose",
         system_blocks=["base instructions", "stage instructions"],
         user_content=RedactedPayload("[REDACTED] log line"),
         output_schema=Answer,
         tools=[ToolSpec(name="grep", description="search", input_schema={"type": "object"})],
         transcript=transcript or [],
+        max_tokens=4000,  # below the streaming threshold — the stub isn't a stream
     )
+    kwargs.update(overrides)
+    return ToolLoopRequest(**kwargs)
 
 
 async def test_explore_parses_tool_calls_and_disables_thinking_and_json_mode() -> None:
@@ -288,6 +331,20 @@ async def test_explore_parses_tool_calls_and_disables_thinking_and_json_mode() -
     assert sent["tools"][0]["function"]["name"] == "grep"
     # No schema block during exploration — only the conclude turn asks for json.
     assert "JSON Schema" not in sent["messages"][0]["content"]
+
+
+async def test_explore_appends_turn_note_as_trailing_user_message() -> None:
+    provider, completions = _provider([_tool_response(content="ok")])
+
+    await provider.explore(
+        _loop_request(turn_note="[loop status] exploration turns remaining: 3.")
+    )
+
+    sent = completions.calls[0]
+    assert sent["messages"][-1] == {
+        "role": "user",
+        "content": "[loop status] exploration turns remaining: 3.",
+    }
 
 
 async def test_conclude_replays_transcript_with_schema_block_and_tools_off() -> None:

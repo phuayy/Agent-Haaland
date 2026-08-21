@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from haaland.domain.models import (
     Classification,
     Diagnosis,
+    DiagnosisDraft,
     FixCandidate,
     FixEvaluation,
     PostmortemProse,
@@ -36,6 +37,21 @@ def _fake_classification(_: LLMRequest) -> Classification:
         blast_radius_estimate="single service, no fan-out observed",
         rationale="Fake provider: deterministic placeholder classification for offline runs.",
         requires_immediate_page=False,
+    )
+
+
+def _fake_diagnosis_draft(_: LLMRequest) -> DiagnosisDraft:
+    return DiagnosisDraft(
+        root_cause="Fake provider placeholder: see culprit_locations for the top code candidate.",
+        category="logic_bug",
+        confidence=0.6,
+        culprit_locations=[],
+        supporting_evidence=[
+            {"evidence_id": "fake-0", "excerpt": "n/a", "why_relevant": "fake provider output"}
+        ],
+        contradicting_evidence=[],
+        recommended_strategy="code_fix",
+        strategy_rationale="Fake provider: default to a direct code fix.",
     )
 
 
@@ -120,6 +136,7 @@ def _fake_postmortem(_: LLMRequest) -> PostmortemProse:
 _FIXTURES: dict[type[BaseModel], Callable[[LLMRequest], BaseModel]] = {
     Classification: _fake_classification,
     Diagnosis: _fake_diagnosis,
+    DiagnosisDraft: _fake_diagnosis_draft,
     FixEvaluation: _fake_evaluation,
     RemediationDraft: _fake_remediation,
     RegressionTest: _fake_test,

@@ -59,6 +59,35 @@ class Workspace:
             if path.is_file() and ".git" not in path.parts:
                 yield path
 
+    def recent_commits(self, *, hours: int = 24, limit: int = 20) -> list[dict]:
+        """Deployment context off the clone itself: the commits landed on
+        base_ref in the last `hours`, newest first, with the files each one
+        touched. For an alert-shaped incident with no traceback this is often
+        the strongest localization signal available. Best-effort: a shallow
+        clone or an unrelated git failure yields [], never an exception."""
+        if self.repo is None:
+            return []
+        try:
+            commits = list(self.repo.iter_commits(max_count=limit, since=f"{hours}.hours.ago"))
+        except Exception:  # noqa: BLE001 — deploy context is optional evidence
+            return []
+        out: list[dict] = []
+        for c in commits:
+            try:
+                files = list(c.stats.files)[:20]
+            except Exception:  # noqa: BLE001 — stats need the parent commit; shallow edge
+                files = []
+            out.append(
+                {
+                    "sha": c.hexsha[:12],
+                    "author": c.author.name if c.author else "?",
+                    "date": c.committed_datetime.isoformat(),
+                    "message": c.summary,
+                    "files": files,
+                }
+            )
+        return out
+
     def close(self) -> None:
         shutil.rmtree(self.path, ignore_errors=True)
 

@@ -18,7 +18,39 @@ def render_classify_input(bundle: EvidenceBundle) -> str:
     )
 
 
-def render_diagnosis_input(bundle: EvidenceBundle) -> str:
+def format_recent_commits(commits: list[dict]) -> str:
+    """Workspace.recent_commits() -> the deploy-context prompt section. Kept
+    here (not in the node) so the exact rendering is unit-testable."""
+    parts = []
+    for c in commits:
+        files = ", ".join(c.get("files", [])[:20]) or "(file list unavailable)"
+        parts.append(
+            f"- {c.get('sha', '?')} {c.get('date', '')} {c.get('author', '')}: "
+            f"{c.get('message', '')}\n  files: {files}"
+        )
+    return "\n".join(parts)
+
+
+def _deploy_context_section(bundle: EvidenceBundle) -> str:
+    if not bundle.deploy_context:
+        return "(none available)"
+    rendered = []
+    for entry in bundle.deploy_context:
+        if isinstance(entry, dict) and "rendered" in entry:
+            rendered.append(str(entry["rendered"]))
+        else:
+            rendered.append(json.dumps(entry, default=str))
+    return "\n".join(rendered)
+
+
+_NO_CANDIDATES = (
+    "(none located — no traceback frame or error-message literal matched this "
+    "repository; no location was pre-ranked for you, and localization is part "
+    "of your job)"
+)
+
+
+def render_diagnosis_input(bundle: EvidenceBundle, orientation: str | None = None) -> str:
     log_lines = "\n".join(f"[{ln.level}] {ln.message}" for ln in bundle.log_lines[:200])
     candidates = "\n\n".join(
         f"### Candidate {i} — {c.path}:{c.start_line}-{c.end_line} "
@@ -26,12 +58,17 @@ def render_diagnosis_input(bundle: EvidenceBundle) -> str:
         for i, c in enumerate(bundle.code_candidates)
     )
     chain = " -> ".join(bundle.call_chain)
-    return (
+    body = (
         f"Service: {bundle.service_name}\nRepository: {bundle.repo_full_name}\n\n"
         f"## Log lines\n{log_lines}\n\n"
         f"## Failure call chain (outermost first)\n{chain or '(no traceback frames)'}\n\n"
-        f"## Code candidates\n{candidates or '(none located)'}"
+        f"## Recent deployment context (commits on {bundle.base_ref})\n"
+        f"{_deploy_context_section(bundle)}\n\n"
+        f"## Code candidates\n{candidates or _NO_CANDIDATES}"
     )
+    if orientation:
+        body += f"\n\n## Repository orientation (deterministic seed)\n{orientation}"
+    return body
 
 
 def render_evaluate_input(
