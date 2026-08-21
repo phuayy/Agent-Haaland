@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ExternalLink, History, Siren } from "lucide-react";
-import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
+import { ExternalLink, History } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HealthBadge } from "@/components/health-badge";
 import { ServiceHistorySheet } from "@/components/service-history-sheet";
-import { useHaalandStore } from "@/lib/store";
+import { TriggerDebugSessionDialog } from "@/components/incident/trigger-debug-session-dialog";
+import { useIncident } from "@/hooks/use-incident";
 import { Service } from "@/lib/types";
 import { timeAgo } from "@/lib/format";
 
@@ -20,84 +20,70 @@ const TIER_VARIANT: Record<Service["tier"], "default" | "secondary" | "outline">
 
 export function ServiceCard({ service }: { service: Service }) {
   const [historyOpen, setHistoryOpen] = useState(false);
-  const simulateIncident = useHaalandStore((s) => s.simulateIncident);
-  const incidents = useHaalandStore((s) => s.incidents);
+  const lastReference = service.incidentReferences[0];
+  const { data: lastIncident } = useIncident(lastReference);
 
-  const lastIncident = incidents.find((i) => i.id === service.lastIncidentId);
-
-  function handleSimulate() {
-    simulateIncident(service.id);
-  }
+  const health =
+    !lastIncident || lastIncident.severity === null
+      ? "healthy"
+      : lastIncident.severity === "P1"
+        ? "p1"
+        : "p2";
 
   return (
     <>
-      <Card className="flex flex-col gap-4 border-border/80 py-5">
-        <CardHeader className="flex flex-row items-start justify-between gap-2">
-          <div>
-            <h3 className="font-semibold leading-tight">{service.name}</h3>
-            <p className="text-xs text-muted-foreground">{service.ownerTeam}</p>
+      <div className="group flex flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:border-foreground/15 hover:shadow-md">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="truncate text-[15px] font-medium leading-tight tracking-tight text-foreground">
+              {service.name}
+            </h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">{service.ownerTeam}</p>
           </div>
-          <Badge variant={TIER_VARIANT[service.tier]}>{service.tier}</Badge>
-        </CardHeader>
+          <Badge variant={TIER_VARIANT[service.tier]} className="shrink-0">
+            {service.tier}
+          </Badge>
+        </div>
 
-        <CardContent className="flex flex-1 flex-col gap-3">
+        <div className="flex flex-1 flex-col gap-3">
           <a
             href={service.repoUrl}
             target="_blank"
             rel="noreferrer"
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+            className="flex items-center gap-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
           >
-            <span className="truncate">
-              {service.repoUrl.replace("https://", "")}
-            </span>
-            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate font-mono">{service.repoUrl.replace("https://", "")}</span>
+            <ExternalLink className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
           </a>
 
           <div>
-            <HealthBadge status={service.health} />
+            <HealthBadge status={health} />
           </div>
 
           {lastIncident && (
             <p className="text-xs text-muted-foreground">
-              Last Incident:{" "}
+              Last triggered{" "}
               <Link
-                href={`/incidents/${lastIncident.id}`}
-                className="font-mono tabular-nums text-foreground/80 hover:underline"
+                href={`/incidents/${lastIncident.reference}`}
+                className="font-mono tabular-nums text-foreground/75 hover:text-foreground hover:underline"
               >
-                {lastIncident.id}
+                {lastIncident.reference}
               </Link>{" "}
-              &bull; {timeAgo(lastIncident.createdAt)}
+              <span className="text-muted-foreground/70">&middot; {timeAgo(lastIncident.detected_at)}</span>
             </p>
           )}
-        </CardContent>
+        </div>
 
-        <CardFooter className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="flex-1"
-            onClick={() => setHistoryOpen(true)}
-          >
+        <div className="flex items-center gap-2 border-t border-border pt-3.5">
+          <Button variant="ghost" size="sm" className="flex-1 font-normal" onClick={() => setHistoryOpen(true)}>
             <History className="h-3.5 w-3.5" />
-            View History
+            History
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
-            onClick={handleSimulate}
-          >
-            <Siren className="h-3.5 w-3.5" />
-            Simulate Incident
-          </Button>
-        </CardFooter>
-      </Card>
+          <TriggerDebugSessionDialog service={service} />
+        </div>
+      </div>
 
-      <ServiceHistorySheet
-        service={service}
-        open={historyOpen}
-        onOpenChange={setHistoryOpen}
-      />
+      <ServiceHistorySheet service={service} open={historyOpen} onOpenChange={setHistoryOpen} />
     </>
   );
 }

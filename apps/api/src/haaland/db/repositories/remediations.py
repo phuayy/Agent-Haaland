@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from haaland.db.models.remediation import Remediation
@@ -56,3 +57,11 @@ class RemediationRepository:
         row.status = status
         row.resolved_at = datetime.now(UTC)
         await self._session.flush()
+
+    async def list_for_incident(self, incident_id: uuid.UUID) -> list[Remediation]:
+        result = await self._session.scalars(
+            select(Remediation)
+            .where(Remediation.incident_id == incident_id)
+            .order_by(Remediation.created_at.asc())
+        )
+        return list(result)

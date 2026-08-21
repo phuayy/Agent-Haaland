@@ -49,6 +49,7 @@ async def get_incident(reference: str, session=Depends(get_session)) -> dict:
         "severity": incident.severity,
         "severity_confidence": incident.severity_confidence,
         "repo_full_name": incident.repo_full_name,
+        "base_ref": incident.base_ref,
         "root_cause_summary": incident.root_cause_summary,
         "detected_at": incident.detected_at,
         "closed_at": incident.closed_at,

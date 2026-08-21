@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from haaland.api.routes import audit, debug_sessions, incidents, notifications, postmortems
+from haaland.api.routes import (
+    audit,
+    debug_sessions,
+    evidence,
+    incidents,
+    notifications,
+    postmortems,
+    remediation,
+)
 from haaland.api.security import require_api_auth
 from haaland.api.webhooks import alertmanager, github, lark
 
@@ -13,6 +21,8 @@ for router in (
     debug_sessions.router,
     incidents.router,
     audit.router,
+    evidence.router,
+    remediation.router,
     postmortems.router,
     notifications.router,
 ):
