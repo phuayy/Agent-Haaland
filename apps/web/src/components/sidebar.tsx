@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, LayoutGrid, ListTree } from "lucide-react";
 import { useIncidents } from "@/hooks/use-incidents";
+import { useServices } from "@/hooks/use-services";
 import { READ_ONLY } from "@/lib/api/client";
-import { useHaalandStore } from "@/lib/store";
 import { TERMINAL_STATUSES } from "@/lib/api/types";
 
 const NAV = [
@@ -54,9 +54,10 @@ function NavItem({
 export function Sidebar() {
   const pathname = usePathname();
   const { data: incidents } = useIncidents();
-  const services = useHaalandStore((s) => s.services);
+  const { data: services } = useServices();
 
   const activeCount = incidents?.filter((i) => !(TERMINAL_STATUSES as string[]).includes(i.status)).length ?? 0;
+  const degradedCount = services?.filter((s) => s.health !== "healthy").length ?? 0;
   // Proxy-mode builds have no direct origin to name — calls go same-origin
   // through /dash-api (lib/api/client.ts), so the footer says so rather than
   // claiming a localhost backend that this browser never contacts.
@@ -100,7 +101,11 @@ export function Sidebar() {
           </div>
           <div className="flex items-center justify-between text-[13px]">
             <span className="text-sidebar-foreground/80">Services monitored</span>
-            <span className="font-semibold tabular-nums text-white">{services.length}</span>
+            <span className="font-semibold tabular-nums text-white">{services?.length ?? 0}</span>
+          </div>
+          <div className="flex items-center justify-between text-[13px]">
+            <span className="text-sidebar-foreground/80">Services degraded</span>
+            <span className="font-semibold tabular-nums text-white">{degradedCount}</span>
           </div>
         </div>
       </div>

@@ -209,6 +209,10 @@ Edit `.env` so that, with `DOMAIN` standing for the hostname from step 3:
 ```bash
 HAALAND_ENV=prod
 HAALAND_APP_BASE_URL=https://DOMAIN
+# .env.example ships this as http://localhost:3000 and it takes precedence
+# over APP_BASE_URL (config.py dashboard_url). Left at the copied value,
+# every notification button links to a page only reachable from the VM.
+HAALAND_DASHBOARD_BASE_URL=https://DOMAIN
 HAALAND_CORS_ORIGINS=https://DOMAIN          # must not be "*" in prod
 HAALAND_SECRET_KEY=<generated>
 HAALAND_VAULT_ENCRYPTION_KEY=<generated>
@@ -273,8 +277,15 @@ source ~/.bashrc
 
 hc up -d --build          # first build: 5-10 minutes
 hc exec api alembic upgrade head
+hc exec api python scripts/seed_services.py   # demo services for the dashboard
 hc ps
 ```
+
+The seed step is optional but the dashboard is a blank registry without it:
+the deployed build is read-only (Caddy fronts a `web` container that forwards
+GET only), so "Add Service" is disabled there and the first services have to
+arrive server-side — from this script, or from the first debug session, which
+registers its service automatically.
 
 Verify, from the VM and then from outside it:
 

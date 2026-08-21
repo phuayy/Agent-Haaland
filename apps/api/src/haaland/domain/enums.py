@@ -76,3 +76,13 @@ class CheckOutcome(StrEnum):
     PASS = "pass"
     FAIL = "fail"
     UNRUNNABLE = "unrunnable"
+
+
+# An incident in one of these states no longer needs attention: it was closed,
+# triaged as too low to act on, or its remediation was rejected and the
+# incident abandoned. Everything else — including FAILED (the run died with the
+# incident still open) and ESCALATED (waiting on a human) — is still active,
+# which is what the service-registry health pill in the dashboard reflects.
+RESOLVED_STATUSES: frozenset[IncidentStatus] = frozenset(
+    {IncidentStatus.CLOSED, IncidentStatus.TRIAGED_LOW, IncidentStatus.REJECTED}
+)

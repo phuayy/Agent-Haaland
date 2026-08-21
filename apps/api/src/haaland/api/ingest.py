@@ -13,6 +13,7 @@ from arq import ArqRedis
 
 from haaland.db.repositories.events import EventRepository
 from haaland.db.repositories.incidents import IncidentRepository
+from haaland.db.repositories.services import ServiceRepository
 from haaland.db.session import session_scope
 from haaland.domain.enums import ActorType, IncidentStatus
 from haaland.domain.errors import IllegalTransition
@@ -85,10 +86,20 @@ async def launch_debug_session(
         audit = AuditService(EventRepository(session))
         incidents = IncidentRepository(session)
         incident_service = IncidentService(incidents, audit)
+        # Attach the incident to its registry row (creating that row if this
+        # is a service nobody registered first, e.g. a curl or webhook
+        # submission). Without the link GET /api/services could only ever
+        # report every service healthy.
+        service = await ServiceRepository(session).get_or_create_by_name(
+            name=request.service_name,
+            repo_full_name=ref.full_name,
+            base_ref=request.base_ref,
+        )
         incident = await incident_service.open_from_debug_session(
             service_name=request.service_name,
             repo_full_name=ref.full_name,
             base_ref=request.base_ref,
+            primary_service_id=service.id,
         )
         incident_id = incident.id
         reference = incident.reference

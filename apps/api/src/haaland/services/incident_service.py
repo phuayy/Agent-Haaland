@@ -14,14 +14,24 @@ class IncidentService:
         self._audit = audit
 
     async def open_from_debug_session(
-        self, *, service_name: str, repo_full_name: str, base_ref: str
+        self,
+        *,
+        service_name: str,
+        repo_full_name: str,
+        base_ref: str,
+        primary_service_id: uuid.UUID | None = None,
     ):
+        """`primary_service_id` links the incident to its registry row so
+        GET /api/services can derive live health from it. Optional because a
+        caller with no registry (tests, scripts) must still be able to open an
+        incident."""
         reference = await self._incidents.next_reference()
         incident = await self._incidents.create(
             reference=reference,
             title=f"Debug session — {service_name}",
             repo_full_name=repo_full_name,
             base_ref=base_ref,
+            primary_service_id=primary_service_id,
         )
         await self._audit.record(
             incident.id,

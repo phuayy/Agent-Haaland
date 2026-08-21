@@ -10,6 +10,7 @@ from haaland.api.routes import (
     notifications,
     postmortems,
     remediation,
+    services,
 )
 from haaland.api.security import require_api_auth
 from haaland.api.webhooks import alertmanager, github, lark
@@ -20,6 +21,7 @@ api_router = APIRouter()
 for router in (
     debug_sessions.router,
     incidents.router,
+    services.router,
     audit.router,
     evidence.router,
     remediation.router,

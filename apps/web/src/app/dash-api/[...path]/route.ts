@@ -18,8 +18,13 @@
 import { NextResponse } from "next/server";
 
 // Container-internal by default: the compose network resolves `api`, and the
-// API publishes no host port in the production stack.
-const API_ORIGIN = process.env.HAALAND_API_URL ?? "http://api:8000";
+// API publishes no host port in the production stack. That hostname does not
+// resolve from a developer's machine, so an unconfigured `next dev` falls back
+// to the port the root docker-compose.yml publishes — otherwise every proxied
+// request on localhost fails with "the incident API is unreachable".
+const API_ORIGIN =
+  process.env.HAALAND_API_URL ??
+  (process.env.NODE_ENV === "production" ? "http://api:8000" : "http://localhost:8000");
 const API_TOKEN = process.env.HAALAND_API_AUTH_TOKEN;
 
 // Streaming a proxied response is pointless here (every payload is a small

@@ -31,6 +31,7 @@ class IncidentRepository:
         repo_full_name: str | None = None,
         base_ref: str | None = None,
         status: IncidentStatus = IncidentStatus.DETECTED,
+        primary_service_id: uuid.UUID | None = None,
     ) -> Incident:
         row = Incident(
             reference=reference,
@@ -38,6 +39,7 @@ class IncidentRepository:
             status=status.value,
             repo_full_name=repo_full_name,
             base_ref=base_ref,
+            primary_service_id=primary_service_id,
         )
         self._session.add(row)
         await self._session.flush()

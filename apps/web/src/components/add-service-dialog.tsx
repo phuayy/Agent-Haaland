@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { Plus } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,32 +21,67 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useHaalandStore } from "@/lib/store";
-import { Tier } from "@/lib/types";
+import { useCreateService } from "@/hooks/use-create-service";
+import { READ_ONLY } from "@/lib/api/client";
+import type { ServiceTier } from "@/lib/api/types";
 
 const EMPTY_FORM = {
   name: "",
   repoUrl: "",
   baseBranch: "main",
-  tier: "Tier 2" as Tier,
+  tier: 2 as ServiceTier,
   ownerTeam: "",
 };
 
 export function AddServiceDialog() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
-  const addService = useHaalandStore((s) => s.addService);
+  const mutation = useCreateService();
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!form.name.trim() || !form.repoUrl.trim() || !form.ownerTeam.trim()) return;
-    addService(form);
-    setForm(EMPTY_FORM);
-    setOpen(false);
+    if (!form.name.trim() || !form.repoUrl.trim()) return;
+    mutation.mutate(
+      {
+        name: form.name.trim(),
+        repo_url: form.repoUrl.trim(),
+        base_ref: form.baseBranch.trim() || "main",
+        tier: form.tier,
+        owner_team: form.ownerTeam.trim() || null,
+      },
+      {
+        onSuccess: () => {
+          setForm(EMPTY_FORM);
+          setOpen(false);
+        },
+      }
+    );
+  }
+
+  // Registering a service is a POST, and proxy-mode builds forward GET only
+  // (lib/api/client.ts). Same treatment as the trigger button: shown but
+  // disabled, so the demo still reveals the entrypoint.
+  if (READ_ONLY) {
+    return (
+      <Button
+        size="sm"
+        disabled
+        title="Read-only dashboard — POST /api/services with your own bearer token, or run `make seed`"
+      >
+        <Plus className="h-4 w-4" />
+        Add Service
+      </Button>
+    );
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) mutation.reset();
+      }}
+    >
       <DialogTrigger
         render={
           <Button size="sm">
@@ -59,7 +94,8 @@ export function AddServiceDialog() {
         <DialogHeader>
           <DialogTitle>Register a new service</DialogTitle>
           <DialogDescription>
-            Connect a microservice for automated incident tracking.
+            Writes to the backend registry via <code className="text-xs">POST /api/services</code> —
+            visible to everyone on this deployment, not just this browser.
           </DialogDescription>
         </DialogHeader>
 
@@ -68,7 +104,7 @@ export function AddServiceDialog() {
             <Label htmlFor="name">Service Name</Label>
             <Input
               id="name"
-              placeholder="Billing Service"
+              placeholder="billing-service"
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               required
@@ -93,27 +129,25 @@ export function AddServiceDialog() {
                 id="baseBranch"
                 placeholder="main"
                 value={form.baseBranch}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, baseBranch: e.target.value }))
-                }
+                onChange={(e) => setForm((f) => ({ ...f, baseBranch: e.target.value }))}
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="tier">Criticality Tier</Label>
               <Select
-                value={form.tier}
+                value={String(form.tier)}
                 onValueChange={(value) =>
-                  setForm((f) => ({ ...f, tier: value as Tier }))
+                  setForm((f) => ({ ...f, tier: Number(value) as ServiceTier }))
                 }
               >
                 <SelectTrigger id="tier" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Tier 1">Tier 1 - Core</SelectItem>
-                  <SelectItem value="Tier 2">Tier 2 - Standard</SelectItem>
-                  <SelectItem value="Tier 3">Tier 3 - Internal</SelectItem>
+                  <SelectItem value="1">Tier 1 - Core</SelectItem>
+                  <SelectItem value="2">Tier 2 - Standard</SelectItem>
+                  <SelectItem value="3">Tier 3 - Internal</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -125,15 +159,19 @@ export function AddServiceDialog() {
               id="ownerTeam"
               placeholder="Team Payments"
               value={form.ownerTeam}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, ownerTeam: e.target.value }))
-              }
-              required
+              onChange={(e) => setForm((f) => ({ ...f, ownerTeam: e.target.value }))}
             />
           </div>
 
+          {mutation.isError && <p className="text-xs text-rose-600">{mutation.error.message}</p>}
+
           <DialogFooter>
-            <Button type="submit" className="w-full">
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={!form.name.trim() || !form.repoUrl.trim() || mutation.isPending}
+            >
+              {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
               Add Service
             </Button>
           </DialogFooter>

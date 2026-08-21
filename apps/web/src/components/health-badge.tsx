@@ -1,8 +1,8 @@
 import { cn } from "@/lib/utils";
-import { HealthStatus } from "@/lib/types";
+import { ServiceHealth } from "@/lib/api/types";
 
 const HEALTH_CONFIG: Record<
-  HealthStatus,
+  ServiceHealth,
   { label: string; className: string; dot: string; pulse?: boolean }
 > = {
   healthy: {
@@ -24,7 +24,7 @@ const HEALTH_CONFIG: Record<
   },
 };
 
-export function HealthBadge({ status }: { status: HealthStatus }) {
+export function HealthBadge({ status }: { status: ServiceHealth }) {
   const config = HEALTH_CONFIG[status];
   return (
     <span

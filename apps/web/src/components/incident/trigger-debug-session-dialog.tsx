@@ -18,35 +18,52 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useCreateDebugSession } from "@/hooks/use-create-debug-session";
 import { READ_ONLY } from "@/lib/api/client";
-import { useHaalandStore } from "@/lib/store";
-import { Service } from "@/lib/types";
+import type { Service } from "@/lib/api/types";
 
 export function TriggerDebugSessionDialog({ service }: { service: Service }) {
   const [open, setOpen] = useState(false);
   const [logText, setLogText] = useState("");
-  const [baseRef, setBaseRef] = useState(service.baseBranch);
+  const [baseRef, setBaseRef] = useState(service.base_ref);
   const router = useRouter();
-  const recordTriggeredIncident = useHaalandStore((s) => s.recordTriggeredIncident);
   const mutation = useCreateDebugSession();
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!logText.trim()) return;
+    if (!logText.trim() || !service.repo_url) return;
+    // No local bookkeeping on success: the backend links the new incident to
+    // this service, so the card's health and history come back from the next
+    // /api/services poll (use-create-debug-session invalidates it).
     mutation.mutate(
       {
-        repo_url: service.repoUrl,
+        repo_url: service.repo_url,
         service_name: service.name,
         log_text: logText,
         base_ref: baseRef || "main",
       },
       {
         onSuccess: (data) => {
-          recordTriggeredIncident(service.id, data.reference);
           setOpen(false);
           setLogText("");
           router.push(`/incidents/${data.reference}`);
         },
       }
+    );
+  }
+
+  // Nothing to clone without a repository — a service registered without one
+  // can't be the target of a debug session.
+  if (!service.repo_url) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        disabled
+        className="flex-1 font-normal"
+        title="No repository linked — add one to trigger a debug session"
+      >
+        <Siren className="h-3.5 w-3.5 text-muted-foreground" />
+        Trigger
+      </Button>
     );
   }
 

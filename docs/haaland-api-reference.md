@@ -21,7 +21,7 @@ Send it on every request:
 Authorization: Bearer <HAALAND_API_AUTH_TOKEN>
 ```
 
-`require_api_auth` in [security.py:19](apps/api/src/haaland/api/security.py#L19) is attached to all seven `/api` routers in [router.py:19-30](apps/api/src/haaland/api/router.py#L19-L30). Missing or wrong gives `401` with `{"detail": "invalid or missing API token"}` and a `WWW-Authenticate: Bearer` header. `/webhooks/*` is exempt on purpose — each webhook verifies its own upstream signature instead. `/health`, `/docs`, `/redoc`, and `/openapi.json` are open.
+`require_api_auth` in [security.py:19](apps/api/src/haaland/api/security.py#L19) is attached to all eight `/api` routers in [router.py:20-31](apps/api/src/haaland/api/router.py#L20-L31). Missing or wrong gives `401` with `{"detail": "invalid or missing API token"}` and a `WWW-Authenticate: Bearer` header. `/webhooks/*` is exempt on purpose — each webhook verifies its own upstream signature instead. `/health`, `/docs`, `/redoc`, and `/openapi.json` are open.
 
 An unset token means open access. That is a development convenience only: `config.py` refuses to start with `HAALAND_ENV=prod` unless a token is set, so it can never silently no-op on a public deployment.
 
@@ -318,6 +318,121 @@ Same mechanics as approve, one contractual difference: **`reason` is required.**
 **`200 OK`** — `{ "status": "resuming" }`. Errors identical to approve.
 
 **Hook note:** enforce `reason.length >= 3` client-side. It's the one field where the two endpoints diverge, and it's an easy source of a confusing 422.
+
+---
+
+## Services
+
+> `src/haaland/api/routes/services.py` · tag `services`
+
+The registry of monitored microservices, backed by the `services` table from migration 0001. The dashboard's service cards read this — health, incident counts, and the last-incident line are **derived per request** from incidents whose `primary_service_id` points at the service, so there is nothing to keep in sync client-side.
+
+Any debug session also *creates* a service row when its `service_name` is not registered yet (`api/ingest.py`), which means a session submitted by curl or by the Alertmanager webhook still shows up here.
+
+### `GET /api/services`
+
+Every registered service, ordered by name.
+
+| | |
+|---|---|
+| **Auth** | `Authorization: Bearer <token>` |
+| **Params** | **None.** No pagination or filtering — filter client-side. |
+
+**`200 OK`** — array of:
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `string` | UUID |
+| `name` | `string` | Unique. This is the `service_name` to send to `POST /api/debug-sessions` |
+| `repo_full_name` | `string \| null` | `owner/repo` |
+| `repo_url` | `string \| null` | Canonical `https://github.com/owner/repo`, safe to link |
+| `base_ref` | `string` | Default branch to patch; `main` when unset |
+| `tier` | `number` | `1` core, `2` standard, `3` internal |
+| `owner_team` | `string \| null` | |
+| `runbook_url` | `string \| null` | |
+| `created_at` | `string` | ISO 8601 + offset |
+| `health` | `string` | `healthy` \| `p1` \| `p2` — derived, never stored |
+| `incident_count` | `number` | All incidents ever linked (capped at the 500 most recent across the whole registry) |
+| `active_incident_count` | `number` | Not `closed`, `triaged_low`, or `rejected` |
+| `last_incident` | `object \| null` | `reference`, `title`, `status`, `severity`, `detected_at`, `closed_at` |
+
+`health` is a pure function of the service's incidents (`domain/health.py`): an open `P1` gives `p1`; any other open incident — including one not yet classified, which is most of a run's life — gives `p2`; everything resolved gives `healthy`. `failed` and `escalated` incidents count as open.
+
+```json
+[
+  {
+    "id": "432c8c68-5dc1-48e9-a69b-e9504c22b0f1",
+    "name": "orders-api",
+    "repo_full_name": "haaland-demo/orders-api",
+    "repo_url": "https://github.com/haaland-demo/orders-api",
+    "base_ref": "main",
+    "tier": 1,
+    "owner_team": "Team Orders",
+    "runbook_url": null,
+    "created_at": "2026-08-21T12:14:03.138179Z",
+    "health": "p1",
+    "incident_count": 3,
+    "active_incident_count": 1,
+    "last_incident": {
+      "reference": "INC-2026-0007",
+      "title": "Debug session — orders-api",
+      "status": "remediating",
+      "severity": "P1",
+      "detected_at": "2026-08-21T12:14:55.592823Z",
+      "closed_at": null
+    }
+  }
+]
+```
+
+Returns `[]` on a freshly migrated database. `python scripts/seed_services.py` (or `make seed`) puts four demo services in it.
+
+---
+
+### `POST /api/services`
+
+Register a service.
+
+| | |
+|---|---|
+| **Auth** | `Authorization: Bearer <token>` |
+| **Body** | `application/json` |
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | `string` | yes | 1–200 chars, unique |
+| `repo_url` | `string \| null` | no | Any GitHub URL form (`https://`, `git@`, `.git` suffix); stored canonicalised |
+| `base_ref` | `string` | no | Default `main` |
+| `tier` | `number` | no | `1`–`3`, default `2` |
+| `owner_team` | `string \| null` | no | |
+| `runbook_url` | `string \| null` | no | |
+
+**`201 Created`** — the same object `GET /api/services` returns, with zero counts.
+
+**Errors**
+
+| Status | `detail` |
+|---|---|
+| `409` | `a service named 'orders-api' is already registered` |
+| `422` | `cannot parse GitHub repo URL: 'not-a-url'` |
+
+---
+
+### `GET /api/services/{service_id}`
+
+One service, same shape as the list entry. Its counts come from the 50 most recent incidents on that service.
+
+**Errors** — `404` `service {id} not found` (also for a malformed UUID).
+
+---
+
+### `GET /api/services/{service_id}/incidents`
+
+Incident history for one service, newest first, capped at 50.
+
+**`200 OK`** — array of `reference`, `title`, `status`, `severity`, `detected_at`, `closed_at` — the same shape as `last_incident` above.
+
+**Errors** — `404` `service {id} not found`.
 
 ---
 
@@ -757,6 +872,9 @@ Branches off that spine: `triaged_low` (auto-closed, low severity), `escalated` 
 | `useCreateDebugSession()` | `POST /api/debug-sessions` | Returns `reference` — navigate to it |
 | `useApprove(ref)` / `useReject(ref)` | `POST .../approve` · `.../reject` | Invalidate the incident + audit queries; resume polling |
 | `useNotificationChannels()` | `GET /api/notifications/channels` | Admin screen |
+| `useServices()` | `GET /api/services` | The service registry — poll it; `health` and the counts are computed server-side |
+| `useServiceIncidents(id)` | `GET /api/services/{id}/incidents` | History for one service, newest first |
+| `useCreateService()` | `POST /api/services` | Invalidate `["services"]` on success |
 
 ### Traps, collected
 

@@ -192,3 +192,49 @@ export interface NotificationTestDelivery {
 export type NotificationTestResult =
   | { results: NotificationTestDelivery[] }
   | { channels: []; detail: string };
+
+// --- Service registry (GET/POST /api/services) ---------------------------
+// The registry lives in Postgres, not in the browser: `health`,
+// `active_incident_count`, and `last_incident` are derived server-side from
+// incidents linked to the service (apps/api domain/health.py), which is why
+// the dashboard polls this instead of computing health from a local list of
+// references it happened to trigger.
+
+export type ServiceHealth = "healthy" | "p1" | "p2";
+
+/** 1 = core, 2 = standard, 3 = internal — the `services.tier` smallint. */
+export type ServiceTier = 1 | 2 | 3;
+
+export interface ServiceIncidentSummary {
+  reference: string;
+  title: string;
+  status: IncidentStatus;
+  severity: Severity | null;
+  detected_at: string;
+  closed_at: string | null;
+}
+
+export interface Service {
+  id: string;
+  name: string;
+  repo_full_name: string | null;
+  repo_url: string | null;
+  base_ref: string;
+  tier: ServiceTier;
+  owner_team: string | null;
+  runbook_url: string | null;
+  created_at: string;
+  health: ServiceHealth;
+  incident_count: number;
+  active_incident_count: number;
+  last_incident: ServiceIncidentSummary | null;
+}
+
+export interface ServiceCreate {
+  name: string;
+  repo_url?: string | null;
+  base_ref?: string;
+  tier?: ServiceTier;
+  owner_team?: string | null;
+  runbook_url?: string | null;
+}

@@ -22,3 +22,18 @@ export function timeAgo(iso: string): string {
   const diffYear = Math.floor(diffDay / 365);
   return `${diffYear}y ago`;
 }
+
+/** `services.tier` is a smallint on the wire (1 = core, 2 = standard,
+ * 3 = internal); the UI has always shown the words. */
+export function tierLabel(tier: number): string {
+  return `Tier ${tier}`;
+}
+
+export function tierDescription(tier: number): string {
+  return { 1: "Core", 2: "Standard", 3: "Internal" }[tier] ?? "Standard";
+}
+
+/** Strips the scheme so a repo URL reads as `github.com/org/repo` on a card. */
+export function repoLabel(repoUrl: string): string {
+  return repoUrl.replace(/^https?:\/\//, "");
+}
