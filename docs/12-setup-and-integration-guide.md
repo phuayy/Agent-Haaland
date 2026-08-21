@@ -391,7 +391,7 @@ Before any other app is pointed at this API:
    | Status | Meaning for the caller |
    |---|---|
    | `detected` → `enriching` → `triaging` → `diagnosing` | in progress |
-   | `triaged_low` | classified P3/P4 — a ticket was filed, no fix attempted, terminal |
+   | `triaged_low` | severity band listed in `HAALAND_TICKET_ONLY_SEVERITIES` — a ticket was filed, no fix attempted, terminal. Unreachable with the default (empty) setting, where every band P1-P4 goes to a PR |
    | `awaiting_approval` | a PR exists; call approve or reject |
    | `escalated` | low confidence or the retry ceiling was hit; a human must take over |
    | `closed` | report generated, terminal |

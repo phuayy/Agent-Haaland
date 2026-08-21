@@ -60,7 +60,7 @@ async def _fail_unenqueued(deps, incident_id, reference: str, exc: Exception) ->
                     f"queue, so no triage will happen. This incident needs a human."
                 ),
                 incident_reference=reference,
-                links={"Incident": f"{deps.settings.app_base_url}/incidents/{reference}"},
+                links={"Incident": deps.settings.incident_url(reference)},
             )
         )
     except Exception:  # noqa: BLE001 - the queue failure is what the caller must see

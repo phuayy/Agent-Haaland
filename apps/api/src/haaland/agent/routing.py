@@ -5,14 +5,19 @@ hints need."""
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from haaland.agent.state import IncidentState
 
-_LOW_SEVERITY = {"P3", "P4"}
 
+def route_by_severity(state: IncidentState, ticket_only: Collection[str] = ()) -> str:
+    """Which bands get a ticket and nothing else.
 
-def route_by_severity(state: IncidentState) -> str:
+    `ticket_only` is empty by default (settings.ticket_only_severity_set),
+    so P1-P4 all run the full debug loop — clone, patch, branch, push, PR.
+    The low-severity shortcut only exists for bands named explicitly."""
     classification = state.get("classification")
-    if classification and classification.severity in _LOW_SEVERITY:
+    if classification and ticket_only and classification.severity in ticket_only:
         return "low"
     return "high"
 

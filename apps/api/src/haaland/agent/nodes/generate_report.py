@@ -124,8 +124,13 @@ async def generate_report_node(state, deps) -> dict:
             ),
             incident_reference=incident.reference,
             severity=Severity(incident.severity) if incident.severity else None,
+            # The dashboard's incident page, not the raw postmortem route: a
+            # card button is opened by a browser with no Authorization header,
+            # and every /api/* route is bearer-gated (api/security.py), so
+            # linking the API directly renders a 401 body instead of a report.
+            # The page's post-mortem panel reads the same row.
             links={
-                "Post-mortem": f"{deps.settings.app_base_url}/api/incidents/{incident.reference}/postmortem",
+                "Post-mortem": deps.settings.incident_url(incident.reference),
                 **({"PR": state["pr_url"]} if state.get("pr_url") else {}),
             },
         )

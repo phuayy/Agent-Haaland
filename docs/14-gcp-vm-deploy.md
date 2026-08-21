@@ -175,7 +175,14 @@ Two separate files, and confusing them is the most common setup error:
 | File | Read by | Contents |
 |---|---|---|
 | `.env` (repo root) | the application, via `env_file` | every `HAALAND_*` setting |
-| `infra/gcp/.env.compose` | docker compose itself, via `--env-file` | hostname, Postgres credentials, PEM path |
+| `infra/gcp/.env.compose` | docker compose itself, via `--env-file` | hostname, Postgres credentials, PEM path, and `HAALAND_API_AUTH_TOKEN` |
+
+`HAALAND_API_AUTH_TOKEN` is the one value that has to appear in both, with
+the same content. The `web` container reads it from `.env.compose` instead
+of `env_file: ../../.env` so that an internet-facing container is not also
+handed the GitHub token, the LLM keys, and the vault key. A mismatch is
+silent at startup and shows up as every dashboard panel reporting
+"invalid or missing API token".
 
 ```bash
 cd ~/haaland
@@ -274,7 +281,12 @@ Verify, from the VM and then from outside it:
 ```bash
 hc exec api curl -sS localhost:8000/health          # {"status":"ok"}
 curl -sS https://DOMAIN/health                       # same, over TLS
+curl -sSI https://DOMAIN/incidents | head -1         # HTTP/2 200 from web:3000
 ```
+
+The third command is the one that catches a Caddy or `web` misconfiguration:
+a `{"detail":"Not Found"}` body there means the request reached the API
+instead of the dashboard, and every notification button will be dead.
 
 If the second command fails, `hc logs caddy` will say why. Almost always it
 is DNS not yet resolving to the VM, or port 80 blocked so the ACME challenge
@@ -444,6 +456,7 @@ Surfaces on this deployment:
 | Audit chain verification | `GET https://DOMAIN/api/incidents/{reference}/audit/verify` |
 | Approve / reject | `POST https://DOMAIN/api/incidents/{reference}/approve` |
 | Post-mortem | `GET https://DOMAIN/api/incidents/{reference}/postmortem` |
+| Dashboard (read-only) | `https://DOMAIN/incidents` and `https://DOMAIN/incidents/{reference}` |
 
 All of those need `Authorization: Bearer $HAALAND_API_AUTH_TOKEN`. `/docs`
 renders without it, but its "Try it out" calls will 401 until you paste the
@@ -464,11 +477,24 @@ triggers and what this command triggers are the same run.
 
 ### The Next.js dashboard
 
-`apps/web` is a UI shell backed by `src/lib/mock-data.ts` — it does not call
-this API yet. It is worth showing as a design artefact, but do not present it
-as a live view of the incidents above. Serving it is a separate build
-(`npm run build && npm start`) plus a Caddy route; it is not part of this
-stack.
+`apps/web` runs in this stack as the `web` service and Caddy serves it at the
+same domain: `/api/*`, `/webhooks/*`, `/health`, and the OpenAPI pages go to
+`api:8000`, everything else to `web:3000`. That is what makes
+`https://DOMAIN/incidents/{reference}` — the link on every Lark card — resolve
+to a page rather than to the API's `{"detail":"Not Found"}`.
+
+**It is read-only, and it is not access-controlled.** The dashboard cannot
+send an `Authorization` header without shipping the token in its JavaScript
+bundle, where any visitor could read it and then approve remediations at will.
+Instead the browser calls a same-origin Next route handler at `/dash-api/*`
+(`apps/web/src/app/dash-api/[...path]/route.ts`) which attaches the token
+server-side and forwards **GET only**; approve, reject, and debug-session
+creation return `405` there and stay first-party API calls made with your own
+token. The approval panel and the Trigger button render disabled and say so.
+
+Reads are still exposed: anyone who reaches the domain can see incident logs,
+root causes, diffs, and repo names. Put IAP, a VPN, or a source-range firewall
+rule in front of it before treating the URL as anything but demo-visible.
 
 ---
 
@@ -537,6 +563,9 @@ the instance between demos reduces the bill to disk plus IP, roughly USD
 | Webhook returns 401 | Token mismatch | `hc exec api printenv HAALAND_ALERTMANAGER_WEBHOOK_TOKEN` and compare byte for byte with Alertmanager's |
 | Webhook returns 422 `repo_url` | The alerting rule has no `repo_url` annotation | Add it to the rule and reload Prometheus |
 | Webhook 202s but nothing happens | Worker down, or the response said `deduplicated` | `hc ps`; read the response body; retry with a fresh `groupKey` |
+| Lark card's Incident button shows `{"detail":"Not Found"}` | The request reached `api:8000`, so either `web` is not running or the Caddy fallback block is missing | `hc ps web`; `curl -sSI https://DOMAIN/incidents`; confirm `infra/gcp/Caddyfile` ends with a bare `handle` pointing at `web:3000` |
+| Every dashboard panel shows "invalid or missing API token" | `HAALAND_API_AUTH_TOKEN` differs between `infra/gcp/.env.compose` and `.env` | Compare `hc exec web printenv HAALAND_API_AUTH_TOKEN` with `hc exec api printenv HAALAND_API_AUTH_TOKEN`, then `hc up -d web` |
+| Approve in the dashboard returns 405 | Working as designed — the dashboard forwards GET only | Approve from Lark, or `POST /api/incidents/{ref}/approve` with your own bearer token |
 | Build OOM-killed | 2 vCPU shape without swap | `bootstrap.sh` adds a 4 GB swapfile — rerun it |
 | PR says "tests not executed" | Docker socket not mounted | Confirm `/var/run/docker.sock` appears in `hc config`; do **not** set `HAALAND_ALLOW_HOST_TEST_EXECUTION=true`, which would run model-written code inside the API container |
 | Disk full | Old images and dangling build cache | `docker system prune -af` (add `--volumes` only after checking `hc ps -a`) |

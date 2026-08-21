@@ -27,14 +27,25 @@ def _diagnosis(confidence: float, strategy: str = "code_fix") -> Diagnosis:
     )
 
 
-def test_route_by_severity_low():
-    assert routing.route_by_severity({"classification": _classification("P4")}) == "low"
-    assert routing.route_by_severity({"classification": _classification("P3")}) == "low"
+def test_route_by_severity_low_when_band_is_ticket_only():
+    ticket_only = frozenset({"P3", "P4"})
+    for severity in ("P3", "P4"):
+        state = {"classification": _classification(severity)}
+        assert routing.route_by_severity(state, ticket_only) == "low"
 
 
 def test_route_by_severity_high():
-    assert routing.route_by_severity({"classification": _classification("P1")}) == "high"
-    assert routing.route_by_severity({"classification": _classification("P2")}) == "high"
+    ticket_only = frozenset({"P3", "P4"})
+    for severity in ("P1", "P2"):
+        state = {"classification": _classification(severity)}
+        assert routing.route_by_severity(state, ticket_only) == "high"
+
+
+def test_route_by_severity_defaults_to_full_pipeline_for_every_band():
+    # No ticket_only configuration = P1-P4 all reach prepare_workspace and
+    # therefore the branch/push/PR tail. This is the shipped default.
+    for severity in ("P1", "P2", "P3", "P4"):
+        assert routing.route_by_severity({"classification": _classification(severity)}) == "high"
 
 
 def test_route_by_diagnosis_confidence_low_escalates():

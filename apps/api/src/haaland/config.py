@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     )
     redis_url: RedisDsn = Field(default="redis://localhost:6379/0")
     app_base_url: str = "http://localhost:8000"
+    # Origin of the Next.js dashboard (apps/web), which is a different service
+    # from this API even when a single reverse proxy fronts both. Notification
+    # buttons point at dashboard pages, not API routes, so they must not be
+    # built from app_base_url: /incidents/{reference} exists only in the web
+    # app, and resolving it against the API origin returns 404 Not Found.
+    # Unset falls back to app_base_url for the single-origin dev setup.
+    dashboard_base_url: str | None = None
     secret_key: str = _DEV_SECRET_KEY
     vault_encryption_key: str = _DEV_VAULT_KEY
     cors_origins: str = "*"  # comma-separated; "*" is dev-only convenience
@@ -102,6 +109,12 @@ class Settings(BaseSettings):
     vault_ttl_hours: int = 24
 
     # Behaviour
+    # Severity bands that take the low-severity exit (file a ticket, close,
+    # no code touched). Empty — the default — means every band P1-P4 runs the
+    # full debug loop: clone, diagnose, patch, branch, push, PR, approval
+    # gate. Set e.g. "P3,P4" to restore the ticket-only shortcut for the
+    # cheap bands when the LLM/CI budget matters more than coverage.
+    ticket_only_severities: str = ""
     max_fix_attempts: int = 3
     approval_timeout_minutes: int = 30
     dedupe_window_seconds: int = 300
@@ -137,6 +150,24 @@ class Settings(BaseSettings):
     @property
     def is_prod(self) -> bool:
         return self.env == "prod"
+
+    @property
+    def dashboard_url(self) -> str:
+        """Base for every user-facing link in a notification. Trailing slashes
+        are stripped so the callers can keep concatenating `/incidents/...`."""
+        return (self.dashboard_base_url or self.app_base_url).rstrip("/")
+
+    def incident_url(self, reference: str) -> str:
+        """The one place that knows the dashboard's incident route. Every
+        notification link goes through here so a future route rename is a
+        single edit rather than a hunt through the graph nodes."""
+        return f"{self.dashboard_url}/incidents/{reference}"
+
+    @property
+    def ticket_only_severity_set(self) -> frozenset[str]:
+        """Parsed `ticket_only_severities`, upper-cased. Routing asks this,
+        never the raw string, so "p3, P4" and "P3,P4" behave the same."""
+        return frozenset(s.strip().upper() for s in self.ticket_only_severities.split(",") if s.strip())
 
     @property
     def cors_origin_list(self) -> list[str]:

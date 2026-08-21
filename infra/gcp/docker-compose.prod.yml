@@ -16,6 +16,10 @@
 #     process listening on the public interface.
 #   - Postgres credentials come from the environment so the demo does not run
 #     on a password committed to git.
+#   - The Next.js dashboard runs here as `web`, behind the same Caddy site.
+#     Without it, /incidents/{reference} — the link on every notification
+#     card — falls through to the API, which has no such route and answers
+#     {"detail":"Not Found"}.
 #   - restart: unless-stopped, so a VM reboot brings the stack back.
 
 name: haaland
@@ -97,6 +101,28 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${GITHUB_APP_PEM_PATH:-/dev/null}:/run/secrets/github-app.pem:ro
 
+  web:
+    build:
+      context: ../../apps/web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Deliberately NOT env_file: ../../.env. This container is reachable from
+    # the internet through Caddy, and that file holds the GitHub token, the
+    # LLM keys, and the vault key — none of which the dashboard needs. It gets
+    # exactly two values.
+    environment:
+      # Container-internal; the API publishes no host port.
+      HAALAND_API_URL: http://api:8000
+      # Server-side only. The /dash-api proxy attaches it so the browser
+      # bundle never carries a credential that can approve a remediation.
+      # Must equal HAALAND_API_AUTH_TOKEN in ../../.env — a mismatch makes
+      # every panel in the dashboard show "invalid or missing API token".
+      HAALAND_API_AUTH_TOKEN: ${HAALAND_API_AUTH_TOKEN:?set HAALAND_API_AUTH_TOKEN in infra/gcp/.env.compose, matching the value in .env}
+    expose:
+      - "3000"
+    depends_on:
+      - api
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -111,6 +137,7 @@ services:
       - caddy-config:/config
     depends_on:
       - api
+      - web
 
 volumes:
   postgres-data:

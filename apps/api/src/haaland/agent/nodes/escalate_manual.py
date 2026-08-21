@@ -43,7 +43,7 @@ async def escalate_manual_node(state, deps) -> dict:
         ),
         incident_reference=state["reference"],
         severity=classification.severity if classification else None,
-        links={"Incident": f"{deps.settings.app_base_url}/incidents/{state['reference']}"},
+        links={"Incident": deps.settings.incident_url(state["reference"])},
     )
     deliveries = await deps.notifications.broadcast(message)
 

@@ -60,7 +60,9 @@ def build_graph(deps, checkpointer):
     g.add_edge("ingest_input", "redact")
     g.add_edge("redact", "classify")
     g.add_conditional_edges(
-        "classify", routing.route_by_severity, {"low": "file_ticket", "high": "prepare_workspace"}
+        "classify",
+        partial(routing.route_by_severity, ticket_only=deps.settings.ticket_only_severity_set),
+        {"low": "file_ticket", "high": "prepare_workspace"},
     )
     g.add_edge("file_ticket", END)
 

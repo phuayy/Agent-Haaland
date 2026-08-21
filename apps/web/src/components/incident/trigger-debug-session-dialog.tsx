@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useCreateDebugSession } from "@/hooks/use-create-debug-session";
+import { READ_ONLY } from "@/lib/api/client";
 import { useHaalandStore } from "@/lib/store";
 import { Service } from "@/lib/types";
 
@@ -46,6 +47,24 @@ export function TriggerDebugSessionDialog({ service }: { service: Service }) {
           router.push(`/incidents/${data.reference}`);
         },
       }
+    );
+  }
+
+  // Creating a session is a write, and proxy-mode builds forward GET only
+  // (lib/api/client.ts). Disabled rather than hidden so the demo still shows
+  // the entrypoint exists and says how to reach it.
+  if (READ_ONLY) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        disabled
+        className="flex-1 font-normal"
+        title="Read-only dashboard — POST /api/debug-sessions with your own bearer token"
+      >
+        <Siren className="h-3.5 w-3.5 text-muted-foreground" />
+        Trigger
+      </Button>
     );
   }
 

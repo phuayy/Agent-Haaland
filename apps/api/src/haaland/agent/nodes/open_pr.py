@@ -26,7 +26,7 @@ async def open_pr_node(state, deps) -> dict:
 
     body = deps.postmortem.render_pr_body(
         incident_reference=state["reference"],
-        dashboard_url=f"{deps.settings.app_base_url}/incidents/{state['reference']}",
+        dashboard_url=deps.settings.incident_url(state["reference"]),
         root_cause=diagnosis.root_cause,
         confidence=diagnosis.confidence,
         body_markdown=remediation.pr_body_markdown,
@@ -45,7 +45,7 @@ async def open_pr_node(state, deps) -> dict:
     # Inform code owners / team lead on the configured channels (Lark
     # today). Delivery results are recorded per channel; a channel being
     # down never blocks the approval gate.
-    dashboard_url = f"{deps.settings.app_base_url}/incidents/{state['reference']}"
+    dashboard_url = deps.settings.incident_url(state["reference"])
     classification = state.get("classification")
     message = NotificationMessage(
         kind="approval_requested",

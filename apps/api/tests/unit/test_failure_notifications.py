@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 from haaland.api import ingest
+from haaland.config import Settings
 from haaland.tasks import debug_session
 
 INCIDENT_ID = "11111111-1111-1111-1111-111111111111"
@@ -30,7 +31,15 @@ class RecordingNotifications:
 class FakeDeps:
     def __init__(self, *, explode: bool = False) -> None:
         self.notifications = RecordingNotifications(explode=explode)
-        self.settings = type("S", (), {"app_base_url": "https://haaland.test"})()
+        # The real Settings, not a stub: these cards carry the only link a
+        # human gets on a run that died, so the link has to be built by the
+        # same code the graph nodes use. _env_file=None keeps the developer's
+        # own .env out of the assertion.
+        self.settings = Settings(
+            _env_file=None,
+            app_base_url="https://api.haaland.test",
+            dashboard_base_url="https://haaland.test",
+        )
 
 
 @pytest.fixture

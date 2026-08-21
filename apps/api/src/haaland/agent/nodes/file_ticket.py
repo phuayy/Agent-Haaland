@@ -1,5 +1,9 @@
-"""P3/P4 exit. Low-severity path: file a ticket, notify, close (docs/01
-state diagram: triaged_low -> closed).
+"""The ticket-only exit: file a ticket, notify, close (docs/01 state
+diagram: triaged_low -> closed).
+
+Unreachable unless HAALAND_TICKET_ONLY_SEVERITIES names a band. By default
+no band takes this route — P1-P4 all run the full debug loop and end at a
+PR plus the human approval gate.
 
 Every severity band P1-P4 produces a notification. The low band still
 carries no page and no human gate — it is a single informational card
@@ -37,7 +41,7 @@ async def file_ticket_node(state: IncidentState, deps) -> dict:
         ),
         incident_reference=state["reference"],
         severity=classification.severity,
-        links={"Incident": f"{deps.settings.app_base_url}/incidents/{state['reference']}"},
+        links={"Incident": deps.settings.incident_url(state["reference"])},
     )
     # Delivery is best-effort by design (services/notification_service.py):
     # a Lark outage must not leave the incident stuck open in triaged_low.

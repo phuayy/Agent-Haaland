@@ -3,6 +3,19 @@
 # Caddy obtains and renews a Let's Encrypt certificate for $HAALAND_DOMAIN
 # automatically, which is why the webhook URL handed to Alertmanager is
 # https:// and the bearer token is never sent in clear.
+#
+# Two upstreams share the domain. Path decides which:
+#
+#   api:8000  the FastAPI backend — /api/*, /webhooks/*, /health, and the
+#             OpenAPI pages. Bearer-authenticated (except the webhooks, which
+#             verify their own upstream signatures).
+#   web:3000  the Next.js dashboard — everything else, including
+#             /incidents/{reference}, which is where notification buttons
+#             land. Before the dashboard was deployed those buttons resolved
+#             against the API and returned {"detail":"Not Found"}.
+#
+# `handle` blocks are matched most-specific-first, so the bare block at the
+# bottom is the fallback, not a catch-all that shadows the ones above it.
 
 {$HAALAND_DOMAIN} {
 	encode zstd gzip
@@ -18,10 +31,30 @@
 		reverse_proxy api:8000
 	}
 
-	# First-party API and the interactive OpenAPI page used for the demo.
-	# Every /api/* route requires HAALAND_API_AUTH_TOKEN (api/security.py).
-	handle {
+	# First-party API. Every route requires HAALAND_API_AUTH_TOKEN
+	# (api/security.py) — including calls from other services, which send
+	# their own token. Not to be confused with the dashboard's /dash-api
+	# proxy, which falls through to web:3000 below.
+	handle /api/* {
 		reverse_proxy api:8000
+	}
+
+	# Interactive OpenAPI pages used for the demo and by API consumers.
+	handle /docs* {
+		reverse_proxy api:8000
+	}
+
+	handle /redoc* {
+		reverse_proxy api:8000
+	}
+
+	handle /openapi.json {
+		reverse_proxy api:8000
+	}
+
+	# The dashboard, and its same-origin read-only proxy at /dash-api/*.
+	handle {
+		reverse_proxy web:3000
 	}
 
 	log {

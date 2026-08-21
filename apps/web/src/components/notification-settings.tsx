@@ -11,6 +11,7 @@ import {
   useSendTestNotification,
   useVerifyLarkCredentials,
 } from "@/hooks/use-notifications";
+import { READ_ONLY } from "@/lib/api/client";
 
 function CopyChatId({ chatId }: { chatId: string }) {
   const [copied, setCopied] = useState(false);
@@ -128,7 +129,12 @@ export function NotificationSettings() {
           <Button
             size="sm"
             onClick={() => test.mutate(target.trim() || undefined)}
-            disabled={test.isPending}
+            disabled={test.isPending || READ_ONLY}
+            title={
+              READ_ONLY
+                ? "Read-only dashboard — POST /api/notifications/test with your own bearer token"
+                : undefined
+            }
           >
             {test.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Send

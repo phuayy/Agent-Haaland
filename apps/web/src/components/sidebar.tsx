@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, LayoutGrid, ListTree } from "lucide-react";
 import { useIncidents } from "@/hooks/use-incidents";
+import { READ_ONLY } from "@/lib/api/client";
 import { useHaalandStore } from "@/lib/store";
 import { TERMINAL_STATUSES } from "@/lib/api/types";
 
@@ -56,7 +57,12 @@ export function Sidebar() {
   const services = useHaalandStore((s) => s.services);
 
   const activeCount = incidents?.filter((i) => !(TERMINAL_STATUSES as string[]).includes(i.status)).length ?? 0;
-  const apiOrigin = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/^https?:\/\//, "");
+  // Proxy-mode builds have no direct origin to name — calls go same-origin
+  // through /dash-api (lib/api/client.ts), so the footer says so rather than
+  // claiming a localhost backend that this browser never contacts.
+  const apiOrigin = READ_ONLY
+    ? "same origin · read-only"
+    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/^https?:\/\//, "");
 
   return (
     <aside className="flex h-screen w-60 shrink-0 flex-col bg-sidebar px-3 py-4 text-sidebar-foreground">

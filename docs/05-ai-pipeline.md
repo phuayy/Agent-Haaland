@@ -179,6 +179,12 @@ def build_graph(deps: Deps) -> StateGraph:
     return g.compile(checkpointer=AsyncPostgresSaver(deps.pg_pool))
 ```
 
+`route_by_severity` reads `HAALAND_TICKET_ONLY_SEVERITIES` (empty by
+default), so as shipped the `"low"` branch is never taken: P1, P2, P3 and P4
+all go down the diagnose → patch → branch → push → PR → approval path. Set
+the variable to `P3,P4` to restore the ticket-only shortcut for the cheap
+bands.
+
 The human gate:
 
 ```python

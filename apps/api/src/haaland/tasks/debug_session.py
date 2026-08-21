@@ -48,7 +48,7 @@ async def _notify_crash(deps, incident_id: str, reference: str, status: str, exc
                 f"This incident needs a human."
             ),
             incident_reference=reference,
-            links={"Incident": f"{deps.settings.app_base_url}/incidents/{reference}"},
+            links={"Incident": deps.settings.incident_url(reference)},
         )
         deliveries = await deps.notifications.broadcast(message)
         async with node_context(deps) as ctx:

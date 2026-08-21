@@ -13,13 +13,21 @@ Generated from source: `src/haaland/api/` (routes, webhooks, schemas), `src/haal
 
 Three things about this backend will change how you build the data layer.
 
-### 1. There is no auth on any `/api/*` endpoint
+### 1. Every `/api/*` endpoint needs one bearer token — and it identifies no one
 
-You asked specifically about `X-Haaland-Actor`. Here is the actual situation:
+Send it on every request:
 
-`current_user()` in [deps.py:27](apps/api/src/haaland/api/deps.py#L27) reads `X-Haaland-Actor` (falling back to the literal string `"api"`), **but no route in the codebase declares it as a dependency.** It is currently unreferenced — the only hits in the whole repo are its own definition and its docstring. The module docstring says real auth is deferred to "a seeded user table with session cookies."
+```
+Authorization: Bearer <HAALAND_API_AUTH_TOKEN>
+```
 
-**Practical consequence:** do not send `X-Haaland-Actor`. It will be ignored. The actor for an approval or rejection is carried in the **JSON body** (`actor` field), which is a deliberate choice — see the comment on `ApprovalRequest`. Every `/api/*` endpoint is unauthenticated today. Only the three `/webhooks/*` endpoints verify anything, and they verify shared secrets, not users.
+`require_api_auth` in [security.py:19](apps/api/src/haaland/api/security.py#L19) is attached to all seven `/api` routers in [router.py:19-30](apps/api/src/haaland/api/router.py#L19-L30). Missing or wrong gives `401` with `{"detail": "invalid or missing API token"}` and a `WWW-Authenticate: Bearer` header. `/webhooks/*` is exempt on purpose — each webhook verifies its own upstream signature instead. `/health`, `/docs`, `/redoc`, and `/openapi.json` are open.
+
+An unset token means open access. That is a development convenience only: `config.py` refuses to start with `HAALAND_ENV=prod` unless a token is set, so it can never silently no-op on a public deployment.
+
+The token is a shared secret, not an identity. There is one for the whole deployment — no per-client tokens, no scopes — and it authorizes approving AI-authored code changes, so treat it accordingly and never put it in a browser bundle.
+
+**On `X-Haaland-Actor`:** don't send it. `current_user()` in [deps.py:27](apps/api/src/haaland/api/deps.py#L27) reads the header (falling back to the literal string `"api"`), but no route declares it as a dependency — it is unreferenced. The actor for an approval or rejection is carried in the **JSON body** (`actor` field), which is deliberate; see the comment on `ApprovalRequest`. Nothing verifies that value.
 
 If you want to be forward-compatible, sending `X-Haaland-Actor` is harmless — it's just inert. But don't build your hooks assuming it identifies anyone.
 
@@ -97,7 +105,7 @@ All timestamp columns are Postgres `timestamptz`, serialized by FastAPI's defaul
 
 ### `GET /health`
 
-Liveness probe. Defined inline on the app, outside the API router — no prefix.
+Liveness probe. Defined inline on the app, outside the API router — no prefix, and outside the bearer-token dependency.
 
 | | |
 |---|---|
@@ -123,7 +131,7 @@ It returns `ok` unconditionally once the process is up. It does not check Postgr
 
 | | |
 |---|---|
-| **Auth** | None |
+| **Auth** | `Authorization: Bearer <token>` |
 | **Content-Type** | `application/json` |
 | **Success status** | `202 Accepted` (explicitly set, not 200) |
 
@@ -187,7 +195,7 @@ Most recent incidents, newest first.
 
 | | |
 |---|---|
-| **Auth** | None |
+| **Auth** | `Authorization: Bearer <token>` |
 | **Params** | **None.** No pagination, no filtering, no search. |
 
 Hard-coded `ORDER BY detected_at DESC LIMIT 50`. There is no offset parameter and no total count — if you need pagination or a status filter, it needs a backend change.
@@ -226,7 +234,7 @@ Full detail for one incident. **This is your polling endpoint.**
 
 | | |
 |---|---|
-| **Auth** | None |
+| **Auth** | `Authorization: Bearer <token>` |
 | **Path param** | `reference` — `string`, e.g. `INC-2026-0001` |
 
 **`200 OK`** — the list shape plus three fields:
@@ -260,7 +268,7 @@ Approves a pending remediation and enqueues `resume_debug_session`. Valid only w
 
 | | |
 |---|---|
-| **Auth** | None — the actor is a **body field**, self-asserted and unverified |
+| **Auth** | `Authorization: Bearer <token>` — the actor is a separate **body field**, self-asserted and unverified |
 | **Content-Type** | `application/json` |
 | **Path param** | `reference` — `string` |
 
@@ -323,7 +331,7 @@ The incident timeline — the hash-chained, append-only event log. Ordered by `s
 
 | | |
 |---|---|
-| **Auth** | None |
+| **Auth** | `Authorization: Bearer <token>` |
 | **Path param** | `reference` — `string` |
 
 **`200 OK`** — array:
@@ -364,7 +372,7 @@ Recomputes every hash in the chain and reports whether it is intact. This is the
 
 | | |
 |---|---|
-| **Auth** | None |
+| **Auth** | `Authorization: Bearer <token>` |
 | **Path param** | `reference` — `string` |
 
 **`200 OK`**
@@ -400,7 +408,7 @@ Returns the generated postmortem. **This endpoint is content-negotiated by query
 
 | | |
 |---|---|
-| **Auth** | None |
+| **Auth** | `Authorization: Bearer <token>` |
 | **Path param** | `reference` — `string` |
 | **Query param** | `as_markdown` — `boolean`, default `false` |
 
@@ -452,7 +460,7 @@ Read-only mirror of the `evidence` table — what the agent actually collected b
 
 | | |
 |---|---|
-| **Auth** | None |
+| **Auth** | `Authorization: Bearer <token>` |
 | **Path param** | `reference` — `string` |
 
 **`200 OK`** — array:
@@ -494,7 +502,7 @@ The drafted fix(es) — read this before approving. Read-only mirror of the `rem
 
 | | |
 |---|---|
-| **Auth** | None |
+| **Auth** | `Authorization: Bearer <token>` |
 | **Path param** | `reference` — `string` |
 
 **`200 OK`** — array:

@@ -294,7 +294,7 @@ POST /rest/api/3/issue/{k}/attachments  attach post-mortem PDF
 
 Description uses Atlassian Document Format, which is verbose JSON — write one `adf.py` helper rather than fighting it inline.
 
-Low-severity path: P3/P4 incidents create a ticket with the full evidence bundle attached and the incident is closed as `triaged_low`. Nobody gets paged.
+Low-severity path (opt-in): only the bands named in `HAALAND_TICKET_ONLY_SEVERITIES` create a ticket with the full evidence bundle attached and close as `triaged_low`, without a page. The variable is empty by default, so P1-P4 all run the full debug loop and end at a PR awaiting human approval.
 
 ### Loki (log retrieval)
 
