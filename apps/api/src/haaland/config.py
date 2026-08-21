@@ -84,6 +84,13 @@ class Settings(BaseSettings):
 
     # Notifications — comma-separated channel names, e.g. "lark" or "lark,slack"
     notify_channels: str = ""
+    # Short "still working" cards at the three in-flight milestones (accepted,
+    # diagnosing, debugging) on top of the outcome cards the graph already
+    # sends. On by default: a real run takes minutes, and without them the
+    # first thing a chat hears about an incident is a PR review request for
+    # something it never saw start. Set false for a channel that only wants
+    # outcomes. See services/progress_service.py.
+    notify_progress: bool = True
     # Lark transport. `webhook` is a per-chat custom bot (no org onboarding,
     # push-only). `app` is an internal application installed into the Lark
     # tenant: any chat or person the app can reach, editable cards, and the

@@ -5,6 +5,7 @@ model treats it as authoritative rather than repeating the same mistake."""
 from __future__ import annotations
 
 from haaland.agent.nodes._context import node_context
+from haaland.agent.nodes._progress import announce_progress
 from haaland.domain.enums import ActorType, IncidentStatus
 from haaland.domain.events import EventType
 from haaland.domain.models import FixEvaluation
@@ -15,6 +16,21 @@ async def evaluate_fixes_node(state, deps) -> dict:
     incident_id = state["incident_id"]
     diagnosis = state["diagnosis"]
     attempt = state.get("fix_attempt", 0) + 1
+
+    # First attempt only. This node is re-entered on every failed check, on
+    # every failed test run and on a human rejection — pinging each time
+    # would turn one incident into five cards saying the same thing, which
+    # is exactly how a bot gets muted. Retries are visible on the incident
+    # timeline; the channel only needs to know the fix loop started.
+    if attempt == 1:
+        classification = state.get("classification")
+        await announce_progress(
+            state,
+            deps,
+            "fixing",
+            severity=classification.severity if classification else None,
+            detail=f"**Root cause:** {diagnosis.root_cause}",
+        )
 
     async with node_context(deps) as ctx:
         incident = await ctx.incidents.get(incident_id)

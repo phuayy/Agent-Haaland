@@ -232,7 +232,16 @@ class NotificationMessage(BaseModel):
     email later) translate this into their own wire format — nothing
     upstream of integrations/notify/ knows what channel is configured."""
 
-    kind: Literal["approval_requested", "incident_closed", "escalated", "triaged_low", "test"]
+    kind: Literal[
+        "approval_requested",
+        "incident_closed",
+        "escalated",
+        "triaged_low",
+        # In-flight heartbeat, not an outcome: nothing to act on, no buttons.
+        # See services/progress_service.py for why the pipeline sends these.
+        "progress",
+        "test",
+    ]
     title: str
     body_markdown: str
     incident_reference: str | None = None

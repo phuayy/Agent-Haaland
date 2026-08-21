@@ -20,6 +20,7 @@ _HEADER_TEMPLATE_BY_KIND = {
     "incident_closed": "green",
     "escalated": "red",
     "triaged_low": "grey",
+    "progress": "blue",
     "test": "blue",
 }
 # Terminal-outcome cards take their colour from the outcome, not from the
@@ -29,10 +30,14 @@ _HEADER_TEMPLATE_BY_KIND = {
 # incident is still moving. The band is always spelled out in the facts line
 # either way, so nothing is lost by not colouring it.
 _OUTCOME_KINDS = frozenset({"incident_closed", "escalated"})
+# Progress pings ignore the severity colour for the opposite reason: a
+# heartbeat wearing a P1's red teaches the channel to read urgency into a
+# card that asks for nothing. They are always the calm blue.
+_KIND_COLOURED = _OUTCOME_KINDS | {"progress"}
 
 
 def build_card(message: NotificationMessage) -> dict:
-    if message.kind in _OUTCOME_KINDS:
+    if message.kind in _KIND_COLOURED:
         template = _HEADER_TEMPLATE_BY_KIND[message.kind]
     else:
         template = (

@@ -111,7 +111,7 @@ The dashboard reflects incident state by **polling the REST API** (`GET /api/inc
 
 ### Notifications & integrations
 
-- **Lark / Feishu** (webhook bot or tenant app) — incident and approval cards
+- **Lark / Feishu** (webhook bot or tenant app) — live progress pings (accepted, diagnosing, debugging) plus the approval and post-mortem cards; see [docs/13 §6](docs/13-lark-integration.md)
 - **GitHub** (Personal Access Token or GitHub App) — the only write path out of the agent, scoped to *branch + PR*, never *merge*
 
 ---

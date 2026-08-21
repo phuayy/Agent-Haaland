@@ -23,7 +23,7 @@ choice decides which environment variables matter.
 | Can post to | That one chat, forever | Any chat the bot is added to, plus direct messages |
 | Address a person | ✗ | ✓ by `open_id` or work email |
 | Edit a card it posted | ✗ | ✓ (`PATCH /open-apis/im/v1/messages/{id}`) |
-| Receive an Approve/Reject tap | ✗ (platform limit) | ✓ once docs/11 §4 lands — see [§6](#6-what-is-not-implemented) |
+| Receive an Approve/Reject tap | ✗ (platform limit) | ✓ once docs/11 §4 lands — see [§7](#7-what-is-not-implemented) |
 | Credentials | one webhook URL (+ optional secret) | `app_id` / `app_secret`, `tenant_access_token` refreshed automatically |
 
 Rule of thumb: **`webhook` for a demo or a single ops channel; `app` for an
@@ -233,11 +233,44 @@ AES-256-CBC with `key = sha256(encrypt_key)` and the IV in the first 16
 bytes ([lark/crypto.py](../apps/api/src/haaland/integrations/notify/lark/crypto.py)).
 
 Anything that is not a challenge — i.e. an actual card button tap —
-currently returns **501**. See §6.
+currently returns **501**. See §7.
 
 ---
 
-## 6. What is *not* implemented
+## 6. What a run posts, in order
+
+One incident produces five cards on the configured channels — three
+in-flight pings and two outcomes:
+
+| # | Card | Kind | Sent from | Colour |
+|---|------|------|-----------|--------|
+| 1 | `Request accepted` | `progress` | `agent/nodes/ingest_input.py` | blue |
+| 2 | `Diagnosing` | `progress` | `agent/nodes/diagnose.py` | blue |
+| 3 | `Debugging` | `progress` | `agent/nodes/evaluate_fixes.py` | blue |
+| 4 | `Fix drafted — review required` | `approval_requested` | `agent/nodes/open_pr.py` | severity |
+| 5 | `Incident closed — post-mortem ready` | `incident_closed` | `agent/nodes/generate_report.py` | green |
+
+Branches replace the tail, they do not add to it: a low-severity triage
+exits at `triaged_low` after card 1, a stalled run posts `escalated` from
+`escalate_manual` instead of card 4, and a crashed run posts the page in
+`tasks/debug_session.py`. Every card is recorded in `notifications`
+regardless of whether delivery succeeded.
+
+The three pings exist because the gap between cards 1 and 4 is minutes of
+cloning, agentic exploration, patching and testing — without them the first
+thing a chat hears about an incident is a review request for something it
+never saw start. They are deliberately cheap to ignore: no buttons, no
+mentions, always blue rather than the severity colour, and the fix loop
+announces itself once no matter how many retries it burns. Set
+`HAALAND_NOTIFY_PROGRESS=false` for a channel that wants outcomes only.
+Wording and the anti-spam rules live in
+[services/progress_service.py](../apps/api/src/haaland/services/progress_service.py);
+delivery is [agent/nodes/_progress.py](../apps/api/src/haaland/agent/nodes/_progress.py),
+which is best-effort by construction — a ping must never fail a run.
+
+---
+
+## 7. What is *not* implemented
 
 - **Approve/Reject from a card button.** The card renders link buttons, not
   action buttons. Wiring a tap to the approval gate needs a
@@ -256,7 +289,7 @@ currently returns **501**. See §6.
 
 ---
 
-## 7. Where the code lives
+## 8. Where the code lives
 
 ```
 apps/api/src/haaland/integrations/notify/
@@ -273,6 +306,10 @@ apps/api/src/haaland/api/webhooks/lark.py           inbound callback endpoint
 apps/api/scripts/lark_check.py                      CLI verification
 apps/api/tests/unit/test_lark_notifier.py           webhook transport
 apps/api/tests/unit/test_lark_app.py                app transport + callbacks
+
+apps/api/src/haaland/services/progress_service.py   in-flight ping wording
+apps/api/src/haaland/agent/nodes/_progress.py       best-effort delivery
+apps/api/tests/unit/test_progress_notifications.py  anti-spam guarantees
 ```
 
 Nothing outside `integrations/notify/lark/` knows Lark exists: the agent

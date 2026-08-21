@@ -25,6 +25,7 @@ detectable hallucination and is dropped (and audited), never invented.
 from __future__ import annotations
 
 from haaland.agent.nodes._context import node_context, workspace_from_state
+from haaland.agent.nodes._progress import announce_progress
 from haaland.domain.enums import ActorType, IncidentStatus
 from haaland.domain.errors import AIInvalidOutputError, AIRefusalError
 from haaland.domain.events import EventType
@@ -169,6 +170,18 @@ def _fallback_diagnosis(bundle: EvidenceBundle, reason: str) -> Diagnosis:
 async def diagnose_node(state, deps) -> dict:
     incident_id = state["incident_id"]
     bundle = state["evidence"]
+
+    # Announced before the model runs, not after: the tool loop is the
+    # longest silence in the pipeline, and the point of the ping is to
+    # cover it. The severity comes from classify, so this card doubles as
+    # the channel's first sight of the band the incident was triaged into.
+    classification = state.get("classification")
+    await announce_progress(
+        state,
+        deps,
+        "diagnosing",
+        severity=classification.severity if classification else None,
+    )
 
     async with node_context(deps) as ctx:
         unresolved: list[str] = []

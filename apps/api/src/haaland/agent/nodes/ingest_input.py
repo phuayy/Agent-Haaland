@@ -4,6 +4,7 @@ import re
 from datetime import UTC, datetime
 
 from haaland.agent.nodes._context import node_context
+from haaland.agent.nodes._progress import announce_progress
 from haaland.agent.state import IncidentState
 from haaland.domain.enums import ActorType, EvidenceKind, IncidentStatus
 from haaland.domain.events import EventType
@@ -30,6 +31,13 @@ def _parse_log_lines(log_text: str) -> list[LogLine]:
 
 
 async def ingest_input_node(state: IncidentState, deps) -> dict:
+    # First thing the graph does, before any work: the "accepted" ping is
+    # the answer to "did my request land?", so it is worth nothing if it
+    # waits behind a clone. Announced from here rather than from the HTTP
+    # route because api/routes/debug_sessions.py returns 202 fast by
+    # contract and a Lark round-trip does not belong in that path.
+    await announce_progress(state, deps, "accepted")
+
     async with node_context(deps) as ctx:
         log_lines = _parse_log_lines(state["log_text"])
         bundle = EvidenceBundle(
