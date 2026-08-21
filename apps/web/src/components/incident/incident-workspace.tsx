@@ -6,10 +6,12 @@ import { IncidentKpis } from "@/components/incident/incident-kpis";
 import { IncidentMasterList } from "@/components/incident/incident-master-list";
 import { IncidentDetailCard } from "@/components/incident/incident-detail-card";
 import { useIncidents } from "@/hooks/use-incidents";
+import { cn } from "@/lib/utils";
 
 export function IncidentWorkspace({ initialReference }: { initialReference?: string }) {
   const { data: incidents, isPending, isError } = useIncidents();
   const [explicitSelection, setExplicitSelection] = useState<string | undefined>(initialReference);
+  const [isExpanded, setIsExpanded] = useState(false);
   const router = useRouter();
 
   // No effect needed: fall back to the newest incident once the list loads,
@@ -40,10 +42,33 @@ export function IncidentWorkspace({ initialReference }: { initialReference?: str
         </div>
       </div>
 
-      <IncidentKpis incidents={incidents ?? []} />
+      {/* Collapsed away in expanded mode. The negative margin swallows the
+          parent flex gap so the detail card gains the full vertical band. */}
+      <div
+        aria-hidden={isExpanded}
+        className={cn(
+          "overflow-hidden transition-all duration-300 ease-in-out",
+          isExpanded ? "pointer-events-none -mb-6 max-h-0 opacity-0" : "max-h-56 opacity-100",
+        )}
+      >
+        <IncidentKpis incidents={incidents ?? []} />
+      </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 lg:grid-cols-[380px_1fr]">
-        <div className="min-h-0 overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <div
+        className={cn(
+          "grid min-h-0 flex-1 grid-cols-1 transition-all duration-300 ease-in-out",
+          isExpanded ? "gap-0 lg:grid-cols-[0px_1fr]" : "gap-5 lg:grid-cols-[380px_1fr]",
+        )}
+      >
+        <div
+          aria-hidden={isExpanded}
+          className={cn(
+            "min-h-0 overflow-hidden rounded-xl border bg-card shadow-sm transition-all duration-300 ease-in-out",
+            isExpanded
+              ? "pointer-events-none h-0 border-transparent opacity-0 shadow-none lg:h-auto"
+              : "border-border opacity-100",
+          )}
+        >
           <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 260px)" }}>
             <IncidentMasterList
               incidents={incidents}
@@ -55,9 +80,13 @@ export function IncidentWorkspace({ initialReference }: { initialReference?: str
           </div>
         </div>
 
-        <div className="min-h-0 overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+        <div className="min-h-0 overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-all duration-300 ease-in-out">
           {selected ? (
-            <IncidentDetailCard reference={selected} />
+            <IncidentDetailCard
+              reference={selected}
+              isExpanded={isExpanded}
+              onToggleExpand={() => setIsExpanded((prev) => !prev)}
+            />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
               Select an incident to view details.

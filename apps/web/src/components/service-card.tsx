@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HealthBadge } from "@/components/health-badge";
 import { ServiceHistorySheet } from "@/components/service-history-sheet";
-import { TriggerDebugSessionDialog } from "@/components/incident/trigger-debug-session-dialog";
 import type { Service } from "@/lib/api/types";
 import { repoLabel, tierLabel, timeAgo } from "@/lib/format";
 
@@ -24,14 +23,11 @@ export function ServiceCard({ service }: { service: Service }) {
   return (
     <>
       <div className="group flex flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:border-foreground/15 hover:shadow-md">
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <h3 className="truncate text-[15px] font-medium leading-tight tracking-tight text-foreground">
               {service.name}
             </h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {service.owner_team ?? "Unassigned"}
-            </p>
           </div>
           <Badge variant={TIER_VARIANT[service.tier] ?? "secondary"} className="shrink-0">
             {tierLabel(service.tier)}
@@ -78,11 +74,11 @@ export function ServiceCard({ service }: { service: Service }) {
           )}
         </div>
 
-        <div className="flex items-center gap-2 border-t border-border pt-3.5">
+        <div className="flex items-center border-t border-border pt-3.5">
           <Button
             variant="ghost"
             size="sm"
-            className="flex-1 font-normal"
+            className="cursor-pointer rounded-md border border-slate-200 px-4 py-2 font-normal transition-colors hover:bg-slate-100"
             onClick={() => setHistoryOpen(true)}
           >
             <History className="h-3.5 w-3.5" />
@@ -91,7 +87,6 @@ export function ServiceCard({ service }: { service: Service }) {
               <span className="tabular-nums text-muted-foreground">({service.incident_count})</span>
             )}
           </Button>
-          <TriggerDebugSessionDialog service={service} />
         </div>
       </div>
 

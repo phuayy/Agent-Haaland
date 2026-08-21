@@ -3,6 +3,7 @@
 import { ExternalLink, FileSearch, Loader2, ScrollText } from "lucide-react";
 import { useEvidence } from "@/hooks/use-evidence";
 import { githubBlobUrl } from "@/lib/api/incidents";
+import { cn } from "@/lib/utils";
 import type { EvidenceItem, EvidenceLogContent, EvidenceSourceContent } from "@/lib/api/types";
 
 function isSourceContent(content: EvidenceItem["content"]): content is EvidenceSourceContent {
@@ -27,10 +28,13 @@ export function EvidenceLogs({
   reference,
   repoFullName,
   baseRef,
+  expanded = false,
 }: {
   reference: string;
   repoFullName: string | null;
   baseRef: string | null;
+  /** Roomier padding and line-heights when the detail card is expanded. */
+  expanded?: boolean;
 }) {
   const { data, isPending, isError } = useEvidence(reference);
 
@@ -70,7 +74,7 @@ export function EvidenceLogs({
         <span className="text-xs font-medium text-muted-foreground">Candidate locations</span>
       </div>
 
-      <div className="flex-1 overflow-auto p-3">
+      <div className={cn("flex-1 overflow-auto transition-all duration-300 ease-in-out", expanded ? "p-5" : "p-3")}>
         {logRow && isLogContent(logRow.content) && (
           <p className="mb-3 text-xs text-muted-foreground">
             {logRow.content.line_count} log line{logRow.content.line_count === 1 ? "" : "s"} ingested.
@@ -81,7 +85,7 @@ export function EvidenceLogs({
           <p className="text-xs text-muted-foreground">No candidate code locations were located.</p>
         )}
 
-        <ol className="flex flex-col gap-2">
+        <ol className={cn("flex flex-col transition-all duration-300 ease-in-out", expanded ? "gap-3" : "gap-2")}>
           {candidates.map((c, i) => {
             const content = c.content as EvidenceSourceContent;
             const link =
@@ -90,7 +94,13 @@ export function EvidenceLogs({
                 : null;
             const confidencePct = Math.round(content.confidence * 100);
             return (
-              <li key={i} className="rounded-md border border-border bg-card p-2.5 shadow-sm">
+              <li
+                key={i}
+                className={cn(
+                  "rounded-md border border-border bg-card shadow-sm transition-all duration-300 ease-in-out",
+                  expanded ? "p-4 leading-relaxed" : "p-2.5",
+                )}
+              >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-1.5">
                     <FileSearch className="h-3 w-3 shrink-0 text-sky-600" />
@@ -118,7 +128,14 @@ export function EvidenceLogs({
                     style={{ width: `${confidencePct}%` }}
                   />
                 </div>
-                <p className="mt-1.5 text-[11px] text-muted-foreground">{reasonLabel(content.reason)}</p>
+                <p
+                  className={cn(
+                    "text-muted-foreground transition-all duration-300 ease-in-out",
+                    expanded ? "mt-2.5 text-xs leading-6" : "mt-1.5 text-[11px]",
+                  )}
+                >
+                  {reasonLabel(content.reason)}
+                </p>
               </li>
             );
           })}
